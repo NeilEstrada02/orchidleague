@@ -20,6 +20,8 @@ function App() {
   const [loginError, setLoginError] = useState('')
   const [dragSeat, setDragSeat] = useState(null)
   const [selectedSeat, setSelectedSeat] = useState(null)
+  const [settings, setSettings] = useState({ signupsOpen: true })
+  const [settingsBusy, setSettingsBusy] = useState(false)
 
   const fetchMe = () =>
     fetch(`${SERVER_URL}/api/me`, { credentials: 'include' })
@@ -39,10 +41,16 @@ function App() {
       .then((data) => setTeams(data.teams ?? []))
       .catch(() => {})
 
-  const refreshAll = () => Promise.all([fetchMe(), fetchLeague(), fetchTeams()])
+  const fetchSettings = () =>
+    fetch(`${SERVER_URL}/api/settings`)
+      .then((res) => res.json())
+      .then((data) => setSettings(data.settings ?? { signupsOpen: true }))
+      .catch(() => {})
+
+  const refreshAll = () => Promise.all([fetchMe(), fetchLeague(), fetchTeams(), fetchSettings()])
 
   useEffect(() => {
-    Promise.all([fetchMe(), fetchLeague(), fetchTeams()]).finally(() => setLoading(false))
+    Promise.all([fetchMe(), fetchLeague(), fetchTeams(), fetchSettings()]).finally(() => setLoading(false))
 
     const params = new URLSearchParams(window.location.search)
     const err = params.get('error')
@@ -82,7 +90,11 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ enrolled: nextEnrolled }),
       })
-      if (!res.ok) throw new Error('enroll failed')
+      const data = await res.json()
+      if (!res.ok) {
+        setError(data.error === 'signups_closed' ? 'Signups are currently closed.' : 'Could not update enrollment.')
+        return
+      }
       await refreshAll()
     } catch {
       setError('Could not update enrollment.')
@@ -106,6 +118,8 @@ function App() {
       if (!res.ok) {
         if (data.error === 'already_a_team_member') {
           setError("You're already on another captain's team, so you can't also be a captain.")
+        } else if (data.error === 'signups_closed') {
+          setError('Signups are currently closed.')
         } else {
           setError('Could not update captain status.')
         }
@@ -131,7 +145,13 @@ function App() {
       })
       const data = await res.json()
       if (!res.ok) {
-        setError(data.error === 'team_already_full' ? 'Your team already has 2 members.' : 'Could not add that player.')
+        if (data.error === 'team_already_full') {
+          setError('Your team already has 2 members.')
+        } else if (data.error === 'signups_closed') {
+          setError('Signups are currently closed.')
+        } else {
+          setError('Could not add that player.')
+        }
         return
       }
       await refreshAll()
@@ -152,7 +172,11 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ memberId, action: 'remove' }),
       })
-      if (!res.ok) throw new Error('remove failed')
+      const data = await res.json()
+      if (!res.ok) {
+        setError(data.error === 'signups_closed' ? 'Signups are currently closed.' : 'Could not remove that player.')
+        return
+      }
       await refreshAll()
     } catch {
       setError('Could not remove that player.')
@@ -191,12 +215,35 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ teamName: teamNameDraft, charity: charityDraft }),
       })
-      if (!res.ok) throw new Error('save failed')
+      const data = await res.json()
+      if (!res.ok) {
+        setError(data.error === 'signups_closed' ? 'Signups are currently closed.' : 'Could not save team info.')
+        return
+      }
       await refreshAll()
     } catch {
       setError('Could not save team info.')
     } finally {
       setSavingInfo(false)
+    }
+  }
+
+  const handleToggleSignups = async () => {
+    setSettingsBusy(true)
+    setError('')
+    try {
+      const res = await fetch(`${SERVER_URL}/api/settings`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ signupsOpen: !settings.signupsOpen }),
+      })
+      if (!res.ok) throw new Error('toggle failed')
+      await refreshAll()
+    } catch {
+      setError('Could not update signup status.')
+    } finally {
+      setSettingsBusy(false)
     }
   }
 
@@ -217,20 +264,39 @@ function App() {
       <div className="stack">
         <div className="card">
           <h1>Orchid League</h1>
+          {!settings.signupsOpen && <p className="closed-banner">🔒 Signups are currently closed.</p>}
           {loading ? (
             <p className="subtitle">Loading...</p>
           ) : user ? (
             <>
               <p className="greeting">Welcome, {user.displayName}!</p>
               <label className="enroll-toggle">
-                <input type="checkbox" checked={user.enrolled} disabled={busy} onChange={handleToggleEnroll} />
+                <input
+                  type="checkbox"
+                  checked={user.enrolled}
+                  disabled={busy || (!settings.signupsOpen && !user.enrolled)}
+                  onChange={handleToggleEnroll}
+                />
                 Enroll in the League
               </label>
               {user.enrolled && (
                 <label className="enroll-toggle">
-                  <input type="checkbox" checked={user.isCaptain} disabled={busy} onChange={handleToggleCaptain} />
+                  <input
+                    type="checkbox"
+                    checked={user.isCaptain}
+                    disabled={busy || !settings.signupsOpen}
+                    onChange={handleToggleCaptain}
+                  />
                   I am the Team Captain
                 </label>
+              )}
+              {user.isAdmin && (
+                <div className="admin-panel">
+                  <span className="field-label">Admin</span>
+                  <button className="secondary-btn" disabled={settingsBusy} onClick={handleToggleSignups}>
+                    {settings.signupsOpen ? 'Close Signups' : 'Open Signups'}
+                  </button>
+                </div>
               )}
               {error && <p className="error-text">{error}</p>}
               <button className="secondary-btn" onClick={handleLogout}>
@@ -262,6 +328,7 @@ function App() {
                 type="text"
                 maxLength={60}
                 value={teamNameDraft}
+                disabled={!settings.signupsOpen}
                 onChange={(e) => setTeamNameDraft(e.target.value)}
                 placeholder={`${user.displayName}'s Team`}
               />
@@ -274,10 +341,15 @@ function App() {
                 type="text"
                 maxLength={80}
                 value={charityDraft}
+                disabled={!settings.signupsOpen}
                 onChange={(e) => setCharityDraft(e.target.value)}
                 placeholder="Charity this team is playing for"
               />
-              <button className="secondary-btn save-btn" disabled={savingInfo} onClick={handleSaveTeamInfo}>
+              <button
+                className="secondary-btn save-btn"
+                disabled={savingInfo || !settings.signupsOpen}
+                onClick={handleSaveTeamInfo}
+              >
                 {savingInfo ? 'Saving...' : 'Save'}
               </button>
             </div>
@@ -289,7 +361,7 @@ function App() {
                   {m.displayName}
                   <button
                     className="link-btn"
-                    disabled={memberBusyId === m.id}
+                    disabled={memberBusyId === m.id || !settings.signupsOpen}
                     onClick={() => handleRemoveMember(m.id)}
                   >
                     Remove
@@ -356,7 +428,7 @@ function App() {
                         {c.displayName}
                         <button
                           className="link-btn"
-                          disabled={memberBusyId === c.id}
+                          disabled={memberBusyId === c.id || !settings.signupsOpen}
                           onClick={() => handleAddMember(c.id)}
                         >
                           Add

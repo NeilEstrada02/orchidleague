@@ -21,6 +21,7 @@ import {
   swapSeats,
   SEATS,
 } from './teamStore.js';
+import { getSettings, setSignupsOpen } from './settingsStore.js';
 
 dotenv.config();
 
@@ -167,10 +168,34 @@ app.post('/auth/logout', (req, res) => {
   req.session.destroy(() => res.json({ ok: true }));
 });
 
+app.get('/api/settings', async (req, res) => {
+  const settings = await getSettings();
+  res.json({ settings });
+});
+
+app.post('/api/settings', async (req, res) => {
+  if (!req.session.user) return res.status(401).json({ error: 'not_authenticated' });
+  const stored = await getUser(req.session.user.id);
+  if (!stored?.isAdmin) {
+    return res.status(403).json({ error: 'not_admin' });
+  }
+  if (typeof req.body?.signupsOpen !== 'boolean') {
+    return res.status(400).json({ error: 'invalid_body' });
+  }
+  const settings = await setSignupsOpen(req.body.signupsOpen);
+  res.json({ settings });
+});
+
 app.post('/api/enroll', async (req, res) => {
   if (!req.session.user) return res.status(401).json({ error: 'not_authenticated' });
   if (typeof req.body?.enrolled !== 'boolean') {
     return res.status(400).json({ error: 'invalid_body' });
+  }
+  if (req.body.enrolled) {
+    const settings = await getSettings();
+    if (!settings.signupsOpen) {
+      return res.status(403).json({ error: 'signups_closed' });
+    }
   }
   const id = req.session.user.id;
   const updated = await setEnrollment(id, req.body.enrolled);
@@ -185,6 +210,10 @@ app.post('/api/captain', async (req, res) => {
   if (!req.session.user) return res.status(401).json({ error: 'not_authenticated' });
   if (typeof req.body?.captain !== 'boolean') {
     return res.status(400).json({ error: 'invalid_body' });
+  }
+  const settings = await getSettings();
+  if (!settings.signupsOpen) {
+    return res.status(403).json({ error: 'signups_closed' });
   }
   const id = req.session.user.id;
   const stored = await getUser(id);
@@ -212,6 +241,10 @@ app.post('/api/team/members', async (req, res) => {
   const captain = await getUser(captainId);
   if (!captain?.isCaptain) {
     return res.status(403).json({ error: 'not_a_captain' });
+  }
+  const settings = await getSettings();
+  if (!settings.signupsOpen) {
+    return res.status(403).json({ error: 'signups_closed' });
   }
 
   const { memberId, action } = req.body ?? {};
@@ -250,6 +283,10 @@ app.post('/api/team/info', async (req, res) => {
   const captain = await getUser(captainId);
   if (!captain?.isCaptain) {
     return res.status(403).json({ error: 'not_a_captain' });
+  }
+  const settings = await getSettings();
+  if (!settings.signupsOpen) {
+    return res.status(403).json({ error: 'signups_closed' });
   }
 
   const { teamName, charity } = req.body ?? {};
