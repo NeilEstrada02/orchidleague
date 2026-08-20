@@ -195,7 +195,23 @@
 }
 
 .standings-eliminated {
-  opacity: 0.55;
+  opacity: 0.6;
+  background: var(--danger-soft-bg);
+}
+
+.eliminated-name {
+  text-decoration: line-through;
+  text-decoration-color: var(--danger);
+}
+
+.danger-btn {
+  border-color: var(--danger-soft-border);
+  color: var(--danger);
+}
+
+.danger-btn:hover {
+  border-color: var(--danger);
+  color: var(--danger);
 }
 
 .link-btn {

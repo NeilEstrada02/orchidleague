@@ -25,6 +25,7 @@ function App() {
   const [pairings, setPairings] = useState([])
   const [roundBusy, setRoundBusy] = useState(false)
   const [reportBusyId, setReportBusyId] = useState(null)
+  const [resetBusy, setResetBusy] = useState(false)
 
   const fetchMe = () =>
     fetch(`${SERVER_URL}/api/me`, { credentials: 'include' })
@@ -257,6 +258,14 @@ function App() {
   }
 
   const handleAdvanceRound = async () => {
+    const current = pairings[0]
+    const message = !current
+      ? 'Start Round 1? This will generate pairings for all eligible teams.'
+      : current.status === 'open'
+        ? `Close Round ${current.number} and start Round ${current.number + 1}? Anyone who hasn't reported a result will be given a loss.`
+        : `Start Round ${current.number + 1}?`
+    if (!window.confirm(message)) return
+
     setRoundBusy(true)
     setError('')
     try {
@@ -293,6 +302,28 @@ function App() {
       setError('Could not report that result.')
     } finally {
       setReportBusyId(null)
+    }
+  }
+
+  const handleResetSeason = async () => {
+    const confirmed = window.confirm(
+      'Reset all standings? This permanently clears every round, pairing, and win/loss record for the entire league. This cannot be undone.'
+    )
+    if (!confirmed) return
+
+    setResetBusy(true)
+    setError('')
+    try {
+      const res = await fetch(`${SERVER_URL}/api/admin/reset-standings`, {
+        method: 'POST',
+        credentials: 'include',
+      })
+      if (!res.ok) throw new Error('reset failed')
+      await refreshAll()
+    } catch {
+      setError('Could not reset standings.')
+    } finally {
+      setResetBusy(false)
     }
   }
 
@@ -372,6 +403,9 @@ function App() {
                   </button>
                   <button className="secondary-btn" disabled={roundBusy} onClick={handleAdvanceRound}>
                     {advanceRoundLabel}
+                  </button>
+                  <button className="secondary-btn danger-btn" disabled={resetBusy} onClick={handleResetSeason}>
+                    Reset All Standings
                   </button>
                 </div>
               )}
@@ -634,7 +668,8 @@ function App() {
                     {standings.map((team) => (
                       <tr key={team.captainId} className={team.eliminated ? 'standings-eliminated' : ''}>
                         <td>
-                          {teamLabel(team)}
+                          {team.eliminated && <span title="Eliminated">❌ </span>}
+                          <span className={team.eliminated ? 'eliminated-name' : ''}>{teamLabel(team)}</span>
                           {team.eliminated && <span className="tag tag-eliminated">Eliminated</span>}
                         </td>
                         <td>{team.wins}</td>

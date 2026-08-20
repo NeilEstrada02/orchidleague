@@ -78,6 +78,10 @@ export async function getRounds() {
   return loadRounds();
 }
 
+export async function resetRounds() {
+  await saveRounds([]);
+}
+
 export async function getCurrentRound() {
   const rounds = await loadRounds();
   const last = rounds[rounds.length - 1];

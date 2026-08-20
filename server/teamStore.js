@@ -191,3 +191,12 @@ export async function applyRoundResults(deltas) {
   }
   await saveTeams(teams);
 }
+
+export async function resetAllRecords() {
+  const teams = await loadTeams();
+  for (const team of Object.values(teams)) {
+    team.wins = 0;
+    team.losses = 0;
+  }
+  await saveTeams(teams);
+}

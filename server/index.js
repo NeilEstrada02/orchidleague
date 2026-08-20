@@ -21,9 +21,10 @@ import {
   swapSeats,
   SEATS,
   applyRoundResults,
+  resetAllRecords,
 } from './teamStore.js';
 import { getSettings, setSignupsOpen } from './settingsStore.js';
-import { getRounds, closeCurrentRound, generateNextRound, reportResult } from './pairingStore.js';
+import { getRounds, closeCurrentRound, generateNextRound, reportResult, resetRounds } from './pairingStore.js';
 
 dotenv.config();
 
@@ -365,6 +366,17 @@ app.get('/api/pairings', async (req, res) => {
   );
   resolved.sort((a, b) => b.number - a.number);
   res.json({ rounds: resolved });
+});
+
+app.post('/api/admin/reset-standings', async (req, res) => {
+  if (!req.session.user) return res.status(401).json({ error: 'not_authenticated' });
+  const stored = await getUser(req.session.user.id);
+  if (!stored?.isAdmin) {
+    return res.status(403).json({ error: 'not_admin' });
+  }
+  await resetRounds();
+  await resetAllRecords();
+  res.json({ ok: true });
 });
 
 app.post('/api/pairings/advance', async (req, res) => {
