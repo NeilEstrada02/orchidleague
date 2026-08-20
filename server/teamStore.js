@@ -36,13 +36,46 @@ function ensureSeats(team) {
   return team.seats;
 }
 
+// Whenever a team is complete (captain + 2 members), every one of those 3
+// people should always occupy exactly one seat. This backfills anyone left
+// unseated (a fresh full team, or a member re-added after a swap-out) into
+// whichever seats are still open, so the UI never has to handle "no one's
+// assigned yet" for a full team.
+function applyDefaultSeatsIfNeeded(team) {
+  if (team.memberIds.length !== 2) return false;
+  const seats = ensureSeats(team);
+  const people = [team.captainId, ...team.memberIds];
+  const occupied = new Set(SEATS.map((s) => seats[s]).filter(Boolean));
+  const unseated = people.filter((p) => !occupied.has(p));
+  const emptySeats = SEATS.filter((s) => !seats[s]);
+  let changed = false;
+  unseated.forEach((personId, i) => {
+    if (emptySeats[i]) {
+      seats[emptySeats[i]] = personId;
+      changed = true;
+    }
+  });
+  return changed;
+}
+
 export async function getTeam(captainId) {
   const teams = await loadTeams();
-  return teams[captainId] ?? null;
+  const team = teams[captainId] ?? null;
+  if (team && applyDefaultSeatsIfNeeded(team)) {
+    teams[captainId] = team;
+    await saveTeams(teams);
+  }
+  return team;
 }
 
 export async function getAllTeams() {
-  return Object.values(await loadTeams());
+  const teams = await loadTeams();
+  let changed = false;
+  for (const team of Object.values(teams)) {
+    if (applyDefaultSeatsIfNeeded(team)) changed = true;
+  }
+  if (changed) await saveTeams(teams);
+  return Object.values(teams);
 }
 
 export async function isMemberOfAnyTeam(userId) {
@@ -78,6 +111,7 @@ export async function addMember(captainId, memberId) {
     team.memberIds.push(memberId);
     team.updatedAt = new Date().toISOString();
   }
+  applyDefaultSeatsIfNeeded(team);
   teams[captainId] = team;
   await saveTeams(teams);
   return team;
@@ -97,18 +131,15 @@ export async function removeMember(captainId, memberId) {
   return team;
 }
 
-export async function setSeat(captainId, seat, personId) {
+export async function swapSeats(captainId, seatA, seatB) {
   const teams = await loadTeams();
-  const team = teams[captainId] ?? blankTeam(captainId);
+  const team = teams[captainId];
+  if (!team) return null;
   const seats = ensureSeats(team);
-  if (personId) {
-    for (const s of SEATS) {
-      if (seats[s] === personId) seats[s] = null;
-    }
-  }
-  seats[seat] = personId ?? null;
+  const temp = seats[seatA];
+  seats[seatA] = seats[seatB];
+  seats[seatB] = temp;
   team.updatedAt = new Date().toISOString();
-  teams[captainId] = team;
   await saveTeams(teams);
   return team;
 }

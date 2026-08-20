@@ -18,7 +18,7 @@ import {
   removeMemberEverywhere,
   ensureTeam,
   setTeamInfo,
-  setSeat,
+  swapSeats,
   SEATS,
 } from './teamStore.js';
 
@@ -264,7 +264,7 @@ app.post('/api/team/info', async (req, res) => {
   res.json({ team: await resolveTeam(team) });
 });
 
-app.post('/api/team/seats', async (req, res) => {
+app.post('/api/team/seats/swap', async (req, res) => {
   if (!req.session.user) return res.status(401).json({ error: 'not_authenticated' });
   const captainId = req.session.user.id;
   const captain = await getUser(captainId);
@@ -272,23 +272,15 @@ app.post('/api/team/seats', async (req, res) => {
     return res.status(403).json({ error: 'not_a_captain' });
   }
 
-  const { seat, personId } = req.body ?? {};
-  if (!SEATS.includes(seat)) {
-    return res.status(400).json({ error: 'invalid_seat' });
-  }
-  if (personId !== null && typeof personId !== 'string') {
-    return res.status(400).json({ error: 'invalid_body' });
+  const { seatA, seatB } = req.body ?? {};
+  if (!SEATS.includes(seatA) || !SEATS.includes(seatB) || seatA === seatB) {
+    return res.status(400).json({ error: 'invalid_seats' });
   }
 
-  if (personId) {
-    const existingTeam = await getTeam(captainId);
-    const validPeople = [captainId, ...(existingTeam?.memberIds ?? [])];
-    if (!validPeople.includes(personId)) {
-      return res.status(400).json({ error: 'person_not_on_team' });
-    }
+  const team = await swapSeats(captainId, seatA, seatB);
+  if (!team) {
+    return res.status(404).json({ error: 'team_not_found' });
   }
-
-  const team = await setSeat(captainId, seat, personId ?? null);
   res.json({ team: await resolveTeam(team) });
 });
 

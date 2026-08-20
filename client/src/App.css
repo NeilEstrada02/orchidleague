@@ -281,3 +281,49 @@
 .standings-table td:not(:first-child) {
   text-align: center;
 }
+
+.seat-hint {
+  font-size: 0.85rem;
+  margin: 0 0 1rem;
+}
+
+.seat-grid {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.seat-card {
+  flex: 1;
+  background: #1f2029;
+  border: 1px solid #2a2b35;
+  border-radius: 8px;
+  padding: 0.75rem 0.5rem;
+  text-align: center;
+  cursor: grab;
+  transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.seat-card:hover {
+  border-color: #5865f2;
+}
+
+.seat-card.seat-selected {
+  border-color: #5865f2;
+  background: rgba(88, 101, 242, 0.15);
+}
+
+.seat-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #a7a8b3;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-bottom: 0.4rem;
+}
+
+.seat-occupant {
+  color: #f2f2f5;
+  font-weight: 600;
+  font-size: 0.95rem;
+}

@@ -18,6 +18,8 @@ function App() {
   const [charityDraft, setCharityDraft] = useState('')
   const [savingInfo, setSavingInfo] = useState(false)
   const [loginError, setLoginError] = useState('')
+  const [dragSeat, setDragSeat] = useState(null)
+  const [selectedSeat, setSelectedSeat] = useState(null)
 
   const fetchMe = () =>
     fetch(`${SERVER_URL}/api/me`, { credentials: 'include' })
@@ -159,20 +161,21 @@ function App() {
     }
   }
 
-  const handleSetSeat = async (seat, personId) => {
+  const handleSwapSeats = async (seatA, seatB) => {
+    if (seatA === seatB) return
     setBusy(true)
     setError('')
     try {
-      const res = await fetch(`${SERVER_URL}/api/team/seats`, {
+      const res = await fetch(`${SERVER_URL}/api/team/seats/swap`, {
         method: 'POST',
         credentials: 'include',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ seat, personId }),
+        body: JSON.stringify({ seatA, seatB }),
       })
-      if (!res.ok) throw new Error('seat update failed')
+      if (!res.ok) throw new Error('swap failed')
       await refreshAll()
     } catch {
-      setError('Could not update that seat assignment.')
+      setError('Could not swap those seats.')
     } finally {
       setBusy(false)
     }
@@ -303,29 +306,37 @@ function App() {
             {user.team.members.length === 2 && (
               <>
                 <h2 className="sub-heading">Seat Assignments</h2>
-                <div className="field-group">
+                <p className="subtitle seat-hint">Drag a player onto another seat to swap them (or tap one, then tap another).</p>
+                <div className="seat-grid">
                   {SEATS.map((seat) => {
-                    const currentId = user.team.seats?.[seat]?.id ?? ''
+                    const occupant = user.team.seats?.[seat] ?? null
+                    const isSelected = selectedSeat === seat
                     return (
-                      <div key={seat}>
-                        <label className="field-label" htmlFor={`seat-${seat}`}>
-                          {SEAT_LABELS[seat]}
-                        </label>
-                        <select
-                          id={`seat-${seat}`}
-                          className="text-input"
-                          value={currentId}
-                          disabled={busy}
-                          onChange={(e) => handleSetSeat(seat, e.target.value || null)}
-                        >
-                          <option value="">-- Unassigned --</option>
-                          <option value={user.id}>{user.displayName}</option>
-                          {user.team.members.map((m) => (
-                            <option key={m.id} value={m.id}>
-                              {m.displayName}
-                            </option>
-                          ))}
-                        </select>
+                      <div
+                        key={seat}
+                        className={`seat-card ${isSelected ? 'seat-selected' : ''}`}
+                        draggable={!busy}
+                        onDragStart={() => setDragSeat(seat)}
+                        onDragOver={(e) => e.preventDefault()}
+                        onDrop={(e) => {
+                          e.preventDefault()
+                          if (dragSeat && dragSeat !== seat) handleSwapSeats(dragSeat, seat)
+                          setDragSeat(null)
+                        }}
+                        onClick={() => {
+                          if (busy) return
+                          if (selectedSeat === null) {
+                            setSelectedSeat(seat)
+                          } else if (selectedSeat === seat) {
+                            setSelectedSeat(null)
+                          } else {
+                            handleSwapSeats(selectedSeat, seat)
+                            setSelectedSeat(null)
+                          }
+                        }}
+                      >
+                        <div className="seat-label">{SEAT_LABELS[seat]}</div>
+                        <div className="seat-occupant">{occupant?.displayName ?? '—'}</div>
                       </div>
                     )
                   })}
