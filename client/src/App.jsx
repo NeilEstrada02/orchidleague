@@ -26,6 +26,8 @@ function App() {
   const [roundBusy, setRoundBusy] = useState(false)
   const [reportBusyId, setReportBusyId] = useState(null)
   const [resetBusy, setResetBusy] = useState(false)
+  const [decklistDraft, setDecklistDraft] = useState('')
+  const [decklistSaving, setDecklistSaving] = useState(false)
 
   const fetchMe = () =>
     fetch(`${SERVER_URL}/api/me`, { credentials: 'include' })
@@ -83,6 +85,11 @@ function App() {
       setCharityDraft(user.team.charity)
     }
   }, [user?.team?.captainId])
+
+  // Seed the decklist draft once, when the user first logs in.
+  useEffect(() => {
+    if (user) setDecklistDraft(user.decklist ?? '')
+  }, [user?.id])
 
   const handleLogout = async () => {
     await fetch(`${SERVER_URL}/auth/logout`, { method: 'POST', credentials: 'include' })
@@ -235,6 +242,25 @@ function App() {
       setError('Could not save team info.')
     } finally {
       setSavingInfo(false)
+    }
+  }
+
+  const handleSaveDecklist = async () => {
+    setDecklistSaving(true)
+    setError('')
+    try {
+      const res = await fetch(`${SERVER_URL}/api/decklist`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: decklistDraft }),
+      })
+      if (!res.ok) throw new Error('save failed')
+      await refreshAll()
+    } catch {
+      setError('Could not save your decklist.')
+    } finally {
+      setDecklistSaving(false)
     }
   }
 
@@ -424,6 +450,30 @@ function App() {
             </>
           )}
         </div>
+
+        {user?.enrolled && (
+          <div className="card roster-card">
+            <h2>My Decklist</h2>
+            <p className="subtitle seat-hint">
+              Paste your decklist here. Edits only apply starting next round — whatever's saved when a round is
+              generated is what's shown for that round.
+            </p>
+            <textarea
+              className="text-input textarea-input"
+              value={decklistDraft}
+              maxLength={5000}
+              placeholder="Paste your decklist..."
+              onChange={(e) => setDecklistDraft(e.target.value)}
+            />
+            <button
+              className="secondary-btn save-btn"
+              disabled={decklistSaving}
+              onClick={handleSaveDecklist}
+            >
+              {decklistSaving ? 'Saving...' : 'Save Decklist'}
+            </button>
+          </div>
+        )}
 
         {user?.isCaptain && user.team && (
           <div className="card roster-card">
@@ -722,8 +772,20 @@ function App() {
                                   <li key={m.seat} className="matchup-row">
                                     <span className="matchup-format">{SEAT_LABELS[m.seat]}:</span>{' '}
                                     <span className={`format-${m.seat}`}>{m.playerA?.displayName ?? 'TBD'}</span>
+                                    {m.playerA?.decklist && (
+                                      <details className="decklist-details">
+                                        <summary>Decklist</summary>
+                                        <pre className="decklist-text">{m.playerA.decklist}</pre>
+                                      </details>
+                                    )}
                                     {' vs '}
                                     <span className={`format-${m.seat}`}>{m.playerB?.displayName ?? 'TBD'}</span>
+                                    {m.playerB?.decklist && (
+                                      <details className="decklist-details">
+                                        <summary>Decklist</summary>
+                                        <pre className="decklist-text">{m.playerB.decklist}</pre>
+                                      </details>
+                                    )}
                                   </li>
                                 ))}
                               </ul>

@@ -7,7 +7,7 @@ import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { redisClient } from './redis.js';
-import { recordLogin, getUser, setEnrollment, getEnrolledUsers, setCaptain } from './userStore.js';
+import { recordLogin, getUser, getAllUsers, setEnrollment, getEnrolledUsers, setCaptain, setDecklist } from './userStore.js';
 import {
   getTeam,
   getAllTeams,
@@ -191,8 +191,26 @@ app.get('/api/me', async (req, res) => {
       isAdmin: stored?.isAdmin ?? false,
       team,
       myTeamCaptainId,
+      decklist: stored?.decklist ?? '',
     },
   });
+});
+
+app.post('/api/decklist', async (req, res) => {
+  if (!req.session.user) return res.status(401).json({ error: 'not_authenticated' });
+  const stored = await getUser(req.session.user.id);
+  if (!stored?.enrolled) {
+    return res.status(400).json({ error: 'must_be_enrolled' });
+  }
+  const { text } = req.body ?? {};
+  if (typeof text !== 'string') {
+    return res.status(400).json({ error: 'invalid_body' });
+  }
+  if (text.length > 5000) {
+    return res.status(400).json({ error: 'too_long' });
+  }
+  const updated = await setDecklist(req.session.user.id, text);
+  res.json({ decklist: updated.decklist });
 });
 
 app.post('/auth/logout', (req, res) => {
@@ -377,11 +395,15 @@ app.get('/api/pairings', async (req, res) => {
           // already in progress.
           const seatsA = p.seatsSnapshot ? await resolveSeatsSnapshot(p.seatsSnapshot.teamA) : teamAInfo.seats;
           const seatsB = p.seatsSnapshot && teamBInfo ? await resolveSeatsSnapshot(p.seatsSnapshot.teamB) : teamBInfo?.seats;
+          const decklistsA = p.decklistsSnapshot?.teamA ?? {};
+          const decklistsB = p.decklistsSnapshot?.teamB ?? {};
+          const withDecklist = (player, decklists) =>
+            player ? { ...player, decklist: decklists[player.id] || '' } : null;
           const matchups = teamBInfo
             ? SEATS.map((seat) => ({
                 seat,
-                playerA: seatsA[seat],
-                playerB: seatsB[seat],
+                playerA: withDecklist(seatsA[seat], decklistsA),
+                playerB: withDecklist(seatsB[seat], decklistsB),
               }))
             : [];
           return {
@@ -430,7 +452,9 @@ app.post('/api/pairings/advance', async (req, res) => {
     return res.status(400).json({ error: 'not_enough_teams', roundClosed: closeResult.closed });
   }
 
-  const newRound = await generateNextRound(eligible);
+  const allUsers = await getAllUsers();
+  const decklistsById = new Map(allUsers.map((u) => [u.id, u.decklist ?? '']));
+  const newRound = await generateNextRound(eligible, decklistsById);
   res.json({ round: newRound });
 });
 

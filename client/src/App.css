@@ -520,3 +520,43 @@
   color: var(--accent);
   text-decoration: underline;
 }
+
+.textarea-input {
+  min-height: 160px;
+  resize: vertical;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.85rem;
+  line-height: 1.4;
+  margin-bottom: 0.75rem;
+}
+
+.decklist-details {
+  margin: 0.2rem 0 0.5rem;
+}
+
+.decklist-details summary {
+  cursor: pointer;
+  color: var(--accent-text);
+  font-size: 0.8rem;
+  font-weight: 600;
+  display: inline;
+}
+
+.decklist-details summary:hover {
+  color: var(--accent);
+}
+
+.decklist-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.6rem 0.75rem;
+  margin: 0.4rem 0 0;
+  font-size: 0.78rem;
+  color: var(--text-primary);
+  max-height: 240px;
+  overflow-y: auto;
+  font-family: ui-monospace, Consolas, monospace;
+}

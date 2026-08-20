@@ -146,17 +146,27 @@ export async function closeCurrentRound() {
   return { deltas, closed: true };
 }
 
-// eligibleTeams: [{ captainId, wins, seats }]
-export async function generateNextRound(eligibleTeams) {
+function snapshotDecklists(team, decklistsById) {
+  const people = [team.captainId, ...team.memberIds];
+  const result = {};
+  for (const id of people) result[id] = decklistsById.get(id) ?? '';
+  return result;
+}
+
+// eligibleTeams: [{ captainId, wins, seats, memberIds }]
+// decklistsById: Map<userId, string>
+export async function generateNextRound(eligibleTeams, decklistsById = new Map()) {
   const rounds = await loadRounds();
   const rematchSet = buildRematchSet(rounds);
   const byeHistory = buildByeHistory(rounds);
   const roundNumber = rounds.length + 1;
 
-  // Snapshot each team's current seat assignments at generation time, so
-  // later seat swaps only affect rounds generated after the swap -- this
-  // round's matchups stay exactly as they were when it was created.
+  // Snapshot each team's current seat assignments AND each player's current
+  // decklist at generation time, so later seat swaps or decklist edits only
+  // affect rounds generated after the change -- this round stays exactly as
+  // it was when it was created.
   const seatsById = new Map(eligibleTeams.map((t) => [t.captainId, t.seats ?? BLANK_SEATS]));
+  const teamsById = new Map(eligibleTeams.map((t) => [t.captainId, t]));
   const winsById = new Map(eligibleTeams.map((t) => [t.captainId, t.wins ?? 0]));
   let pool = shuffle(eligibleTeams.map((t) => t.captainId));
   pool.sort((a, b) => winsById.get(b) - winsById.get(a));
@@ -201,6 +211,10 @@ export async function generateNextRound(eligibleTeams) {
         result: null,
         reportedBy: null,
         seatsSnapshot: { teamA: seatsById.get(a), teamB: seatsById.get(b) },
+        decklistsSnapshot: {
+          teamA: snapshotDecklists(teamsById.get(a), decklistsById),
+          teamB: snapshotDecklists(teamsById.get(b), decklistsById),
+        },
       });
       rematchSet.add(pairKey(a, b));
     }
@@ -213,6 +227,7 @@ export async function generateNextRound(eligibleTeams) {
       result: 'A',
       reportedBy: null,
       seatsSnapshot: { teamA: seatsById.get(byeTeam), teamB: null },
+      decklistsSnapshot: { teamA: snapshotDecklists(teamsById.get(byeTeam), decklistsById), teamB: null },
     });
   }
 
