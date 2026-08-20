@@ -1,6 +1,7 @@
 import { redisClient } from './redis.js';
 
 const KEY = 'orchid:rounds';
+const BLANK_SEATS = { pioneer: null, modern: null, standard: null };
 
 async function loadRounds() {
   const raw = await redisClient.get(KEY);
@@ -82,6 +83,29 @@ export async function resetRounds() {
   await saveRounds([]);
 }
 
+// Locks in the current lineup for any pairing in the open round that
+// predates seat-snapshotting (or was otherwise never snapshotted), using
+// whatever seats are live right now. Called just before a seat swap is
+// applied, so the round's matchups freeze at "how things stood right before
+// this swap" instead of continuing to track live seats indefinitely.
+export async function backfillCurrentRoundSeats(seatsByCaptainId) {
+  const rounds = await loadRounds();
+  const round = rounds[rounds.length - 1];
+  if (!round || round.status !== 'open') return false;
+  let changed = false;
+  for (const p of round.pairings) {
+    if (!p.seatsSnapshot) {
+      p.seatsSnapshot = {
+        teamA: seatsByCaptainId[p.teamA] ?? BLANK_SEATS,
+        teamB: p.teamB ? seatsByCaptainId[p.teamB] ?? BLANK_SEATS : null,
+      };
+      changed = true;
+    }
+  }
+  if (changed) await saveRounds(rounds);
+  return changed;
+}
+
 export async function getCurrentRound() {
   const rounds = await loadRounds();
   const last = rounds[rounds.length - 1];
@@ -121,8 +145,6 @@ export async function closeCurrentRound() {
   await saveRounds(rounds);
   return { deltas, closed: true };
 }
-
-const BLANK_SEATS = { pioneer: null, modern: null, standard: null };
 
 // eligibleTeams: [{ captainId, wins, seats }]
 export async function generateNextRound(eligibleTeams) {

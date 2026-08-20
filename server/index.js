@@ -24,7 +24,14 @@ import {
   resetAllRecords,
 } from './teamStore.js';
 import { getSettings, setSignupsOpen } from './settingsStore.js';
-import { getRounds, closeCurrentRound, generateNextRound, reportResult, resetRounds } from './pairingStore.js';
+import {
+  getRounds,
+  closeCurrentRound,
+  generateNextRound,
+  reportResult,
+  resetRounds,
+  backfillCurrentRoundSeats,
+} from './pairingStore.js';
 
 dotenv.config();
 
@@ -335,6 +342,16 @@ app.post('/api/team/seats/swap', async (req, res) => {
   if (!SEATS.includes(seatA) || !SEATS.includes(seatB) || seatA === seatB) {
     return res.status(400).json({ error: 'invalid_seats' });
   }
+
+  // Lock in the open round's matchups (using whatever seats are live right
+  // now) before applying the swap, for any pairing that predates seat
+  // snapshotting and so is still tracking live seats.
+  const allTeams = await getAllTeams();
+  const seatsByCaptainId = {};
+  for (const t of allTeams) {
+    seatsByCaptainId[t.captainId] = t.seats ?? { pioneer: null, modern: null, standard: null };
+  }
+  await backfillCurrentRoundSeats(seatsByCaptainId);
 
   const team = await swapSeats(captainId, seatA, seatB);
   if (!team) {
