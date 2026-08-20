@@ -23,7 +23,8 @@ import {
   applyRoundResults,
   resetAllRecords,
 } from './teamStore.js';
-import { getSettings, setSignupsOpen } from './settingsStore.js';
+import { getSettings, setSignupsOpen, setDummyAccountsEnabled } from './settingsStore.js';
+import { seedDummyAccounts, clearDummyAccounts } from './dummyAccounts.js';
 import {
   getRounds,
   closeCurrentRound,
@@ -432,6 +433,24 @@ app.post('/api/admin/reset-standings', async (req, res) => {
   await resetRounds();
   await resetAllRecords();
   res.json({ ok: true });
+});
+
+app.post('/api/admin/dummy-accounts', async (req, res) => {
+  if (!req.session.user) return res.status(401).json({ error: 'not_authenticated' });
+  const stored = await getUser(req.session.user.id);
+  if (!stored?.isAdmin) {
+    return res.status(403).json({ error: 'not_admin' });
+  }
+  if (typeof req.body?.enabled !== 'boolean') {
+    return res.status(400).json({ error: 'invalid_body' });
+  }
+  if (req.body.enabled) {
+    await seedDummyAccounts();
+  } else {
+    await clearDummyAccounts();
+  }
+  const settings = await setDummyAccountsEnabled(req.body.enabled);
+  res.json({ settings });
 });
 
 app.post('/api/pairings/advance', async (req, res) => {

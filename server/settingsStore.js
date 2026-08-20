@@ -1,7 +1,7 @@
 import { redisClient } from './redis.js';
 
 const KEY = 'orchid:settings';
-const DEFAULTS = { signupsOpen: true };
+const DEFAULTS = { signupsOpen: true, dummyAccountsEnabled: false };
 
 export async function getSettings() {
   const raw = await redisClient.get(KEY);
@@ -16,6 +16,13 @@ export async function getSettings() {
 export async function setSignupsOpen(open) {
   const settings = await getSettings();
   settings.signupsOpen = open;
+  await redisClient.set(KEY, JSON.stringify(settings));
+  return settings;
+}
+
+export async function setDummyAccountsEnabled(enabled) {
+  const settings = await getSettings();
+  settings.dummyAccountsEnabled = enabled;
   await redisClient.set(KEY, JSON.stringify(settings));
   return settings;
 }

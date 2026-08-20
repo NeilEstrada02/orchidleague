@@ -89,3 +89,15 @@ export async function setDecklist(id, text) {
   await saveUsers(users);
   return existing;
 }
+
+export async function deleteUsers(ids) {
+  const users = await loadUsers();
+  let changed = false;
+  for (const id of ids) {
+    if (users[id]) {
+      delete users[id];
+      changed = true;
+    }
+  }
+  if (changed) await saveUsers(users);
+}

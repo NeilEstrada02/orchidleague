@@ -20,12 +20,13 @@ function App() {
   const [loginError, setLoginError] = useState('')
   const [dragSeat, setDragSeat] = useState(null)
   const [selectedSeat, setSelectedSeat] = useState(null)
-  const [settings, setSettings] = useState({ signupsOpen: true })
+  const [settings, setSettings] = useState({ signupsOpen: true, dummyAccountsEnabled: false })
   const [settingsBusy, setSettingsBusy] = useState(false)
   const [pairings, setPairings] = useState([])
   const [roundBusy, setRoundBusy] = useState(false)
   const [reportBusyId, setReportBusyId] = useState(null)
   const [resetBusy, setResetBusy] = useState(false)
+  const [dummyBusy, setDummyBusy] = useState(false)
   const [decklistDraft, setDecklistDraft] = useState('')
   const [decklistSaving, setDecklistSaving] = useState(false)
 
@@ -50,7 +51,7 @@ function App() {
   const fetchSettings = () =>
     fetch(`${SERVER_URL}/api/settings`)
       .then((res) => res.json())
-      .then((data) => setSettings(data.settings ?? { signupsOpen: true }))
+      .then((data) => setSettings(data.settings ?? { signupsOpen: true, dummyAccountsEnabled: false }))
       .catch(() => {})
 
   const fetchPairings = () =>
@@ -353,6 +354,31 @@ function App() {
     }
   }
 
+  const handleToggleDummyAccounts = async () => {
+    const next = !settings.dummyAccountsEnabled
+    const message = next
+      ? 'Add 14 dummy test accounts and 3 pre-built teams to the league for testing?'
+      : 'Remove all dummy test accounts and their teams? This cannot be undone.'
+    if (!window.confirm(message)) return
+
+    setDummyBusy(true)
+    setError('')
+    try {
+      const res = await fetch(`${SERVER_URL}/api/admin/dummy-accounts`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ enabled: next }),
+      })
+      if (!res.ok) throw new Error('toggle failed')
+      await refreshAll()
+    } catch {
+      setError('Could not update test accounts.')
+    } finally {
+      setDummyBusy(false)
+    }
+  }
+
   const candidates = user
     ? league.filter((member) => member.id !== user.id && !member.isCaptain && !member.onTeam)
     : []
@@ -432,6 +458,9 @@ function App() {
                   </button>
                   <button className="secondary-btn danger-btn" disabled={resetBusy} onClick={handleResetSeason}>
                     Reset All Standings
+                  </button>
+                  <button className="secondary-btn" disabled={dummyBusy} onClick={handleToggleDummyAccounts}>
+                    {settings.dummyAccountsEnabled ? 'Remove Test Accounts' : 'Add Test Accounts'}
                   </button>
                 </div>
               )}
