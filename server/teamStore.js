@@ -2,6 +2,8 @@ import { redisClient } from './redis.js';
 
 const KEY = 'orchid:teams';
 
+export const SEATS = ['pioneer', 'modern', 'standard'];
+
 async function loadTeams() {
   const raw = await redisClient.get(KEY);
   if (!raw) return {};
@@ -24,8 +26,14 @@ function blankTeam(captainId) {
     charity: '',
     wins: 0,
     losses: 0,
+    seats: { pioneer: null, modern: null, standard: null },
     updatedAt: new Date().toISOString(),
   };
+}
+
+function ensureSeats(team) {
+  if (!team.seats) team.seats = { pioneer: null, modern: null, standard: null };
+  return team.seats;
 }
 
 export async function getTeam(captainId) {
@@ -80,7 +88,27 @@ export async function removeMember(captainId, memberId) {
   const team = teams[captainId];
   if (!team) return null;
   team.memberIds = team.memberIds.filter((id) => id !== memberId);
+  const seats = ensureSeats(team);
+  for (const seat of SEATS) {
+    if (seats[seat] === memberId) seats[seat] = null;
+  }
   team.updatedAt = new Date().toISOString();
+  await saveTeams(teams);
+  return team;
+}
+
+export async function setSeat(captainId, seat, personId) {
+  const teams = await loadTeams();
+  const team = teams[captainId] ?? blankTeam(captainId);
+  const seats = ensureSeats(team);
+  if (personId) {
+    for (const s of SEATS) {
+      if (seats[s] === personId) seats[s] = null;
+    }
+  }
+  seats[seat] = personId ?? null;
+  team.updatedAt = new Date().toISOString();
+  teams[captainId] = team;
   await saveTeams(teams);
   return team;
 }
@@ -95,13 +123,24 @@ export async function disbandTeam(captainId) {
 
 export async function removeMemberEverywhere(memberId) {
   const teams = await loadTeams();
-  let changed = false;
+  let anyChanged = false;
   for (const team of Object.values(teams)) {
+    let teamChanged = false;
     if (team.memberIds.includes(memberId)) {
       team.memberIds = team.memberIds.filter((id) => id !== memberId);
+      teamChanged = true;
+    }
+    const seats = ensureSeats(team);
+    for (const seat of SEATS) {
+      if (seats[seat] === memberId) {
+        seats[seat] = null;
+        teamChanged = true;
+      }
+    }
+    if (teamChanged) {
       team.updatedAt = new Date().toISOString();
-      changed = true;
+      anyChanged = true;
     }
   }
-  if (changed) await saveTeams(teams);
+  if (anyChanged) await saveTeams(teams);
 }

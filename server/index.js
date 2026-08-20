@@ -18,6 +18,8 @@ import {
   removeMemberEverywhere,
   ensureTeam,
   setTeamInfo,
+  setSeat,
+  SEATS,
 } from './teamStore.js';
 
 dotenv.config();
@@ -67,6 +69,12 @@ async function resolveTeam(team) {
   const members = await Promise.all(
     team.memberIds.map(async (id) => ({ id, displayName: (await getUser(id))?.displayName ?? 'Unknown' }))
   );
+  const rawSeats = team.seats ?? { pioneer: null, modern: null, standard: null };
+  const seats = {};
+  for (const seat of SEATS) {
+    const personId = rawSeats[seat] ?? null;
+    seats[seat] = personId ? { id: personId, displayName: (await getUser(personId))?.displayName ?? 'Unknown' } : null;
+  }
   return {
     captainId: team.captainId,
     captainName: captain?.displayName ?? 'Unknown',
@@ -75,6 +83,7 @@ async function resolveTeam(team) {
     wins: team.wins ?? 0,
     losses: team.losses ?? 0,
     members,
+    seats,
   };
 }
 
@@ -252,6 +261,34 @@ app.post('/api/team/info', async (req, res) => {
   }
 
   const team = await setTeamInfo(captainId, { teamName: teamName.trim(), charity: charity.trim() });
+  res.json({ team: await resolveTeam(team) });
+});
+
+app.post('/api/team/seats', async (req, res) => {
+  if (!req.session.user) return res.status(401).json({ error: 'not_authenticated' });
+  const captainId = req.session.user.id;
+  const captain = await getUser(captainId);
+  if (!captain?.isCaptain) {
+    return res.status(403).json({ error: 'not_a_captain' });
+  }
+
+  const { seat, personId } = req.body ?? {};
+  if (!SEATS.includes(seat)) {
+    return res.status(400).json({ error: 'invalid_seat' });
+  }
+  if (personId !== null && typeof personId !== 'string') {
+    return res.status(400).json({ error: 'invalid_body' });
+  }
+
+  if (personId) {
+    const existingTeam = await getTeam(captainId);
+    const validPeople = [captainId, ...(existingTeam?.memberIds ?? [])];
+    if (!validPeople.includes(personId)) {
+      return res.status(400).json({ error: 'person_not_on_team' });
+    }
+  }
+
+  const team = await setSeat(captainId, seat, personId ?? null);
   res.json({ team: await resolveTeam(team) });
 });
 

@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import './App.css'
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || ''
+const SEATS = ['pioneer', 'modern', 'standard']
+const SEAT_LABELS = { pioneer: 'Pioneer', modern: 'Modern', standard: 'Standard' }
 
 function App() {
   const [user, setUser] = useState(null)
@@ -157,6 +159,25 @@ function App() {
     }
   }
 
+  const handleSetSeat = async (seat, personId) => {
+    setBusy(true)
+    setError('')
+    try {
+      const res = await fetch(`${SERVER_URL}/api/team/seats`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ seat, personId }),
+      })
+      if (!res.ok) throw new Error('seat update failed')
+      await refreshAll()
+    } catch {
+      setError('Could not update that seat assignment.')
+    } finally {
+      setBusy(false)
+    }
+  }
+
   const handleSaveTeamInfo = async () => {
     setSavingInfo(true)
     setError('')
@@ -279,6 +300,39 @@ function App() {
               ))}
             </ul>
 
+            {user.team.members.length === 2 && (
+              <>
+                <h2 className="sub-heading">Seat Assignments</h2>
+                <div className="field-group">
+                  {SEATS.map((seat) => {
+                    const currentId = user.team.seats?.[seat]?.id ?? ''
+                    return (
+                      <div key={seat}>
+                        <label className="field-label" htmlFor={`seat-${seat}`}>
+                          {SEAT_LABELS[seat]}
+                        </label>
+                        <select
+                          id={`seat-${seat}`}
+                          className="text-input"
+                          value={currentId}
+                          disabled={busy}
+                          onChange={(e) => handleSetSeat(seat, e.target.value || null)}
+                        >
+                          <option value="">-- Unassigned --</option>
+                          <option value={user.id}>{user.displayName}</option>
+                          {user.team.members.map((m) => (
+                            <option key={m.id} value={m.id}>
+                              {m.displayName}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    )
+                  })}
+                </div>
+              </>
+            )}
+
             {user.team.members.length < 2 && (
               <>
                 <h2 className="sub-heading">Add a Teammate</h2>
@@ -365,6 +419,11 @@ function App() {
                           : team.members.map((m) => m.displayName).join(', ')}
                       </span>
                       {team.charity && <span className="subtitle">Playing for: {team.charity}</span>}
+                      {(team.seats?.pioneer || team.seats?.modern || team.seats?.standard) && (
+                        <span className="subtitle">
+                          Pioneer: {team.seats.pioneer?.displayName ?? '—'} · Modern: {team.seats.modern?.displayName ?? '—'} · Standard: {team.seats.standard?.displayName ?? '—'}
+                        </span>
+                      )}
                     </li>
                   ))}
                 </ul>
