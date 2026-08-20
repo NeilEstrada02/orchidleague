@@ -191,11 +191,9 @@ app.post('/api/enroll', async (req, res) => {
   if (typeof req.body?.enrolled !== 'boolean') {
     return res.status(400).json({ error: 'invalid_body' });
   }
-  if (req.body.enrolled) {
-    const settings = await getSettings();
-    if (!settings.signupsOpen) {
-      return res.status(403).json({ error: 'signups_closed' });
-    }
+  const settings = await getSettings();
+  if (!settings.signupsOpen) {
+    return res.status(403).json({ error: 'signups_closed' });
   }
   const id = req.session.user.id;
   const updated = await setEnrollment(id, req.body.enrolled);

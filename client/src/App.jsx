@@ -274,7 +274,7 @@ function App() {
                 <input
                   type="checkbox"
                   checked={user.enrolled}
-                  disabled={busy || (!settings.signupsOpen && !user.enrolled)}
+                  disabled={busy || !settings.signupsOpen}
                   onChange={handleToggleEnroll}
                 />
                 Enroll in the League
