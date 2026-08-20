@@ -872,6 +872,14 @@ function App() {
                   <span className="format-pioneer">Pioneer</span> seats must play all matches on Magic Arena. The{' '}
                   <span className="format-modern">Modern</span> seat must play all matches on MTGO.
                 </li>
+                <li>
+                  <strong>No Draws:</strong> No draws, intentional or otherwise. If you fail to submit your result
+                  for the week, both teams receive a loss.
+                </li>
+                <li>
+                  <strong>Match Settings:</strong> Use the tournament settings on Magic Arena, and a 25-minute timer
+                  on Magic Online. Both sides can agree to play without a timer, only if they want to.
+                </li>
               </ul>
             </>
           )}
