@@ -46,6 +46,7 @@ if (!DISCORD_CLIENT_ID || !DISCORD_CLIENT_SECRET || !DISCORD_REDIRECT_URI || !SE
 }
 
 const isProduction = NODE_ENV === 'production';
+const ELIMINATION_LOSSES = 3;
 
 const app = express();
 app.set('trust proxy', 1);
@@ -85,6 +86,7 @@ async function resolveTeam(team) {
     charity: team.charity ?? '',
     wins: team.wins ?? 0,
     losses: team.losses ?? 0,
+    eliminated: (team.losses ?? 0) >= ELIMINATION_LOSSES,
     members,
     seats,
   };
@@ -378,7 +380,7 @@ app.post('/api/pairings/advance', async (req, res) => {
   }
 
   const allTeams = await getAllTeams();
-  const eligible = allTeams.filter((t) => t.memberIds.length === 2);
+  const eligible = allTeams.filter((t) => t.memberIds.length === 2 && (t.losses ?? 0) < ELIMINATION_LOSSES);
   if (eligible.length < 2) {
     return res.status(400).json({ error: 'not_enough_teams', roundClosed: closeResult.closed });
   }

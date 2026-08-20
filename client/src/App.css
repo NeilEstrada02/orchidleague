@@ -189,6 +189,15 @@
   vertical-align: middle;
 }
 
+.tag-eliminated {
+  color: var(--danger);
+  background: var(--danger-soft-bg);
+}
+
+.standings-eliminated {
+  opacity: 0.55;
+}
+
 .link-btn {
   background: transparent;
   border: none;

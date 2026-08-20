@@ -394,6 +394,9 @@ function App() {
         {user?.isCaptain && user.team && (
           <div className="card roster-card">
             <h2>Your Team</h2>
+            {user.team.eliminated && (
+              <p className="closed-banner">❌ Your team has been eliminated (3 losses) and will not receive future pairings.</p>
+            )}
 
             <div className="field-group">
               <label className="field-label" htmlFor="teamName">
@@ -579,7 +582,10 @@ function App() {
                 <ul className="roster-list">
                   {teams.map((team) => (
                     <li key={team.captainId} className="team-row">
-                      <strong>{teamLabel(team)}</strong>
+                      <strong>
+                        {teamLabel(team)}
+                        {team.eliminated && <span className="tag tag-eliminated">Eliminated</span>}
+                      </strong>
                       <span className="subtitle">
                         Captain: <span className={formatClass(team.captainId)}>{team.captainName}</span>
                       </span>
@@ -626,8 +632,11 @@ function App() {
                   </thead>
                   <tbody>
                     {standings.map((team) => (
-                      <tr key={team.captainId}>
-                        <td>{teamLabel(team)}</td>
+                      <tr key={team.captainId} className={team.eliminated ? 'standings-eliminated' : ''}>
+                        <td>
+                          {teamLabel(team)}
+                          {team.eliminated && <span className="tag tag-eliminated">Eliminated</span>}
+                        </td>
                         <td>{team.wins}</td>
                         <td>{team.losses}</td>
                       </tr>
