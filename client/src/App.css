@@ -15,6 +15,9 @@
   --danger: #f28b82;
   --danger-soft-bg: rgba(242, 139, 130, 0.12);
   --danger-soft-border: rgba(242, 139, 130, 0.4);
+  --format-standard: #ef8a86;
+  --format-pioneer: #e0c05c;
+  --format-modern: #7fa8ef;
 }
 
 .landing {
@@ -427,4 +430,34 @@
   display: flex;
   gap: 1rem;
   margin-top: 0.3rem;
+}
+
+.matchup-list {
+  list-style: none;
+  margin: 0.3rem 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+.matchup-row {
+  font-size: 0.85rem;
+}
+
+.matchup-format {
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.format-standard {
+  color: var(--format-standard);
+}
+
+.format-pioneer {
+  color: var(--format-pioneer);
+}
+
+.format-modern {
+  color: var(--format-modern);
 }

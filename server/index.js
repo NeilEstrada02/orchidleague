@@ -90,12 +90,6 @@ async function resolveTeam(team) {
   };
 }
 
-async function teamLabelFor(captainId) {
-  const [team, captain] = await Promise.all([getTeam(captainId), getUser(captainId)]);
-  const name = team?.teamName || `${captain?.displayName ?? 'Unknown'}'s Team`;
-  return { captainId, name };
-}
-
 async function getUserTeamCaptainId(userId) {
   const stored = await getUser(userId);
   if (stored?.isCaptain) return userId;
@@ -344,12 +338,26 @@ app.get('/api/pairings', async (req, res) => {
       number: round.number,
       status: round.status,
       pairings: await Promise.all(
-        round.pairings.map(async (p) => ({
-          id: p.id,
-          teamA: await teamLabelFor(p.teamA),
-          teamB: p.teamB ? await teamLabelFor(p.teamB) : null,
-          result: p.result,
-        }))
+        round.pairings.map(async (p) => {
+          const teamAInfo = await resolveTeam(await getTeam(p.teamA));
+          const teamBInfo = p.teamB ? await resolveTeam(await getTeam(p.teamB)) : null;
+          const matchups = teamBInfo
+            ? SEATS.map((seat) => ({
+                seat,
+                playerA: teamAInfo.seats[seat],
+                playerB: teamBInfo.seats[seat],
+              }))
+            : [];
+          return {
+            id: p.id,
+            teamA: { captainId: p.teamA, name: teamAInfo.teamName || `${teamAInfo.captainName}'s Team` },
+            teamB: teamBInfo
+              ? { captainId: p.teamB, name: teamBInfo.teamName || `${teamBInfo.captainName}'s Team` }
+              : null,
+            result: p.result,
+            matchups,
+          };
+        })
       ),
     }))
   );

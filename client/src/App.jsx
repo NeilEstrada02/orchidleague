@@ -308,6 +308,15 @@ function App() {
 
   const teamLabel = (team) => team.teamName || `${team.captainName}'s Team`
 
+  const formatBySeat = {}
+  teams.forEach((t) => {
+    SEATS.forEach((seat) => {
+      const occ = t.seats?.[seat]
+      if (occ) formatBySeat[occ.id] = seat
+    })
+  })
+  const formatClass = (personId) => (formatBySeat[personId] ? `format-${formatBySeat[personId]}` : '')
+
   const currentRound = pairings[0]
   const advanceRoundLabel = !currentRound
     ? 'Start Round 1'
@@ -423,10 +432,12 @@ function App() {
             </div>
 
             <ul className="roster-list">
-              <li className="team-slot captain-slot">{user.displayName} (Captain)</li>
+              <li className="team-slot captain-slot">
+                <span className={formatClass(user.id)}>{user.displayName}</span> (Captain)
+              </li>
               {user.team.members.map((m) => (
                 <li key={m.id} className="team-slot">
-                  {m.displayName}
+                  <span className={formatClass(m.id)}>{m.displayName}</span>
                   <button
                     className="link-btn"
                     disabled={memberBusyId === m.id || !settings.signupsOpen}
@@ -476,7 +487,7 @@ function App() {
                         }}
                       >
                         <div className="seat-label">{SEAT_LABELS[seat]}</div>
-                        <div className="seat-occupant">{occupant?.displayName ?? '—'}</div>
+                        <div className={`seat-occupant format-${seat}`}>{occupant?.displayName ?? '—'}</div>
                       </div>
                     )
                   })}
@@ -549,7 +560,7 @@ function App() {
                     <li key={member.id}>
                       {member.isAdmin && <span title="Admin">👑 </span>}
                       {member.isCaptain && <span title="Captain">🧑‍✈️ </span>}
-                      {member.displayName}
+                      <span className={formatClass(member.id)}>{member.displayName}</span>
                       {member.isCaptain && <span className="tag">Captain</span>}
                       {!member.isCaptain && member.onTeam && <span className="tag">On a team</span>}
                     </li>
@@ -569,16 +580,27 @@ function App() {
                   {teams.map((team) => (
                     <li key={team.captainId} className="team-row">
                       <strong>{teamLabel(team)}</strong>
-                      <span className="subtitle">Captain: {team.captainName}</span>
                       <span className="subtitle">
-                        {team.members.length === 0
-                          ? 'no teammates yet'
-                          : team.members.map((m) => m.displayName).join(', ')}
+                        Captain: <span className={formatClass(team.captainId)}>{team.captainName}</span>
+                      </span>
+                      <span className="subtitle">
+                        {team.members.length === 0 ? (
+                          'no teammates yet'
+                        ) : (
+                          team.members.map((m, idx) => (
+                            <span key={m.id}>
+                              <span className={formatClass(m.id)}>{m.displayName}</span>
+                              {idx < team.members.length - 1 ? ', ' : ''}
+                            </span>
+                          ))
+                        )}
                       </span>
                       {team.charity && <span className="subtitle">Playing for: {team.charity}</span>}
                       {(team.seats?.pioneer || team.seats?.modern || team.seats?.standard) && (
                         <span className="subtitle">
-                          Pioneer: {team.seats.pioneer?.displayName ?? '—'} · Modern: {team.seats.modern?.displayName ?? '—'} · Standard: {team.seats.standard?.displayName ?? '—'}
+                          Pioneer: <span className="format-pioneer">{team.seats.pioneer?.displayName ?? '—'}</span> · Modern:{' '}
+                          <span className="format-modern">{team.seats.modern?.displayName ?? '—'}</span> · Standard:{' '}
+                          <span className="format-standard">{team.seats.standard?.displayName ?? '—'}</span>
                         </span>
                       )}
                     </li>
@@ -641,6 +663,18 @@ function App() {
                               {p.teamA.name}
                               {p.teamB ? ` vs ${p.teamB.name}` : ''}
                             </div>
+                            {p.matchups.length > 0 && (
+                              <ul className="matchup-list">
+                                {p.matchups.map((m) => (
+                                  <li key={m.seat} className="matchup-row">
+                                    <span className="matchup-format">{SEAT_LABELS[m.seat]}:</span>{' '}
+                                    <span className={`format-${m.seat}`}>{m.playerA?.displayName ?? 'TBD'}</span>
+                                    {' vs '}
+                                    <span className={`format-${m.seat}`}>{m.playerB?.displayName ?? 'TBD'}</span>
+                                  </li>
+                                ))}
+                              </ul>
+                            )}
                             <div className="subtitle pairing-status">{pairingResultLabel(p)}</div>
                             {canReport && (
                               <div className="pairing-actions">
