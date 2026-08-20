@@ -22,6 +22,9 @@ function App() {
   const [selectedSeat, setSelectedSeat] = useState(null)
   const [settings, setSettings] = useState({ signupsOpen: true })
   const [settingsBusy, setSettingsBusy] = useState(false)
+  const [pairings, setPairings] = useState([])
+  const [roundBusy, setRoundBusy] = useState(false)
+  const [reportBusyId, setReportBusyId] = useState(null)
 
   const fetchMe = () =>
     fetch(`${SERVER_URL}/api/me`, { credentials: 'include' })
@@ -47,10 +50,16 @@ function App() {
       .then((data) => setSettings(data.settings ?? { signupsOpen: true }))
       .catch(() => {})
 
-  const refreshAll = () => Promise.all([fetchMe(), fetchLeague(), fetchTeams(), fetchSettings()])
+  const fetchPairings = () =>
+    fetch(`${SERVER_URL}/api/pairings`)
+      .then((res) => res.json())
+      .then((data) => setPairings(data.rounds ?? []))
+      .catch(() => {})
+
+  const refreshAll = () => Promise.all([fetchMe(), fetchLeague(), fetchTeams(), fetchSettings(), fetchPairings()])
 
   useEffect(() => {
-    Promise.all([fetchMe(), fetchLeague(), fetchTeams(), fetchSettings()]).finally(() => setLoading(false))
+    Promise.all([fetchMe(), fetchLeague(), fetchTeams(), fetchSettings(), fetchPairings()]).finally(() => setLoading(false))
 
     const params = new URLSearchParams(window.location.search)
     const err = params.get('error')
@@ -247,6 +256,46 @@ function App() {
     }
   }
 
+  const handleAdvanceRound = async () => {
+    setRoundBusy(true)
+    setError('')
+    try {
+      const res = await fetch(`${SERVER_URL}/api/pairings/advance`, {
+        method: 'POST',
+        credentials: 'include',
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setError(data.error === 'not_enough_teams' ? 'Need at least 2 full teams to generate pairings.' : 'Could not advance the round.')
+        return
+      }
+      await refreshAll()
+    } catch {
+      setError('Could not advance the round.')
+    } finally {
+      setRoundBusy(false)
+    }
+  }
+
+  const handleReportResult = async (pairingId, outcome) => {
+    setReportBusyId(pairingId)
+    setError('')
+    try {
+      const res = await fetch(`${SERVER_URL}/api/pairings/report`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ pairingId, outcome }),
+      })
+      if (!res.ok) throw new Error('report failed')
+      await refreshAll()
+    } catch {
+      setError('Could not report that result.')
+    } finally {
+      setReportBusyId(null)
+    }
+  }
+
   const candidates = user
     ? league.filter((member) => member.id !== user.id && !member.isCaptain && !member.onTeam)
     : []
@@ -258,6 +307,21 @@ function App() {
   })
 
   const teamLabel = (team) => team.teamName || `${team.captainName}'s Team`
+
+  const currentRound = pairings[0]
+  const advanceRoundLabel = !currentRound
+    ? 'Start Round 1'
+    : currentRound.status === 'open'
+      ? `Close Round ${currentRound.number} & Start Round ${currentRound.number + 1}`
+      : `Start Round ${currentRound.number + 1}`
+
+  const pairingResultLabel = (p) => {
+    if (!p.teamB) return `${p.teamA.name} — Bye`
+    if (p.result === 'A') return `${p.teamA.name} won`
+    if (p.result === 'B') return `${p.teamB.name} won`
+    if (p.result === 'double-loss') return 'No result reported — both teams lost'
+    return 'Pending'
+  }
 
   return (
     <div className="landing">
@@ -296,6 +360,9 @@ function App() {
                   <span className="field-label">Admin</span>
                   <button className="secondary-btn" disabled={settingsBusy} onClick={handleToggleSignups}>
                     {settings.signupsOpen ? 'Close Signups' : 'Open Signups'}
+                  </button>
+                  <button className="secondary-btn" disabled={roundBusy} onClick={handleAdvanceRound}>
+                    {advanceRoundLabel}
                   </button>
                 </div>
               )}
@@ -463,6 +530,12 @@ function App() {
             >
               Standings
             </button>
+            <button
+              className={`tab-btn ${activeTab === 'pairings' ? 'active' : ''}`}
+              onClick={() => setActiveTab('pairings')}
+            >
+              Pairings
+            </button>
           </div>
 
           {activeTab === 'roster' && (
@@ -539,6 +612,60 @@ function App() {
                     ))}
                   </tbody>
                 </table>
+              )}
+            </>
+          )}
+
+          {activeTab === 'pairings' && (
+            <>
+              <h2>Pairings</h2>
+              {pairings.length === 0 ? (
+                <p className="subtitle">No rounds have been played yet.</p>
+              ) : (
+                pairings.map((round) => (
+                  <div key={round.number} className="round-block">
+                    <h3 className="round-heading">
+                      Round {round.number}
+                      {round.status === 'open' && <span className="tag">Current</span>}
+                    </h3>
+                    <ul className="roster-list">
+                      {round.pairings.map((p) => {
+                        const mine =
+                          user &&
+                          user.myTeamCaptainId &&
+                          (p.teamA.captainId === user.myTeamCaptainId || p.teamB?.captainId === user.myTeamCaptainId)
+                        const canReport = mine && round.status === 'open' && p.teamB && !p.result
+                        return (
+                          <li key={p.id} className={`pairing-row ${mine ? 'pairing-mine' : ''}`}>
+                            <div className="pairing-teams">
+                              {p.teamA.name}
+                              {p.teamB ? ` vs ${p.teamB.name}` : ''}
+                            </div>
+                            <div className="subtitle pairing-status">{pairingResultLabel(p)}</div>
+                            {canReport && (
+                              <div className="pairing-actions">
+                                <button
+                                  className="link-btn"
+                                  disabled={reportBusyId === p.id}
+                                  onClick={() => handleReportResult(p.id, 'win')}
+                                >
+                                  We Won
+                                </button>
+                                <button
+                                  className="link-btn"
+                                  disabled={reportBusyId === p.id}
+                                  onClick={() => handleReportResult(p.id, 'loss')}
+                                >
+                                  We Lost
+                                </button>
+                              </div>
+                            )}
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  </div>
+                ))
               )}
             </>
           )}

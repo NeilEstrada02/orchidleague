@@ -20,8 +20,10 @@ import {
   setTeamInfo,
   swapSeats,
   SEATS,
+  applyRoundResults,
 } from './teamStore.js';
 import { getSettings, setSignupsOpen } from './settingsStore.js';
+import { getRounds, closeCurrentRound, generateNextRound, reportResult } from './pairingStore.js';
 
 dotenv.config();
 
@@ -86,6 +88,20 @@ async function resolveTeam(team) {
     members,
     seats,
   };
+}
+
+async function teamLabelFor(captainId) {
+  const [team, captain] = await Promise.all([getTeam(captainId), getUser(captainId)]);
+  const name = team?.teamName || `${captain?.displayName ?? 'Unknown'}'s Team`;
+  return { captainId, name };
+}
+
+async function getUserTeamCaptainId(userId) {
+  const stored = await getUser(userId);
+  if (stored?.isCaptain) return userId;
+  const allTeams = await getAllTeams();
+  const team = allTeams.find((t) => t.memberIds.includes(userId));
+  return team?.captainId ?? null;
 }
 
 app.get('/auth/discord', (req, res) => {
@@ -153,6 +169,7 @@ app.get('/api/me', async (req, res) => {
   if (!req.session.user) return res.json({ user: null });
   const stored = await getUser(req.session.user.id);
   const team = stored?.isCaptain ? await resolveTeam(await getTeam(req.session.user.id)) : null;
+  const myTeamCaptainId = await getUserTeamCaptainId(req.session.user.id);
   res.json({
     user: {
       ...req.session.user,
@@ -160,6 +177,7 @@ app.get('/api/me', async (req, res) => {
       isCaptain: stored?.isCaptain ?? false,
       isAdmin: stored?.isAdmin ?? false,
       team,
+      myTeamCaptainId,
     },
   });
 });
@@ -317,6 +335,67 @@ app.post('/api/team/seats/swap', async (req, res) => {
     return res.status(404).json({ error: 'team_not_found' });
   }
   res.json({ team: await resolveTeam(team) });
+});
+
+app.get('/api/pairings', async (req, res) => {
+  const rounds = await getRounds();
+  const resolved = await Promise.all(
+    rounds.map(async (round) => ({
+      number: round.number,
+      status: round.status,
+      pairings: await Promise.all(
+        round.pairings.map(async (p) => ({
+          id: p.id,
+          teamA: await teamLabelFor(p.teamA),
+          teamB: p.teamB ? await teamLabelFor(p.teamB) : null,
+          result: p.result,
+        }))
+      ),
+    }))
+  );
+  resolved.sort((a, b) => b.number - a.number);
+  res.json({ rounds: resolved });
+});
+
+app.post('/api/pairings/advance', async (req, res) => {
+  if (!req.session.user) return res.status(401).json({ error: 'not_authenticated' });
+  const stored = await getUser(req.session.user.id);
+  if (!stored?.isAdmin) {
+    return res.status(403).json({ error: 'not_admin' });
+  }
+
+  const closeResult = await closeCurrentRound();
+  if (closeResult.deltas.length > 0) {
+    await applyRoundResults(closeResult.deltas);
+  }
+
+  const allTeams = await getAllTeams();
+  const eligible = allTeams.filter((t) => t.memberIds.length === 2);
+  if (eligible.length < 2) {
+    return res.status(400).json({ error: 'not_enough_teams', roundClosed: closeResult.closed });
+  }
+
+  const newRound = await generateNextRound(eligible);
+  res.json({ round: newRound });
+});
+
+app.post('/api/pairings/report', async (req, res) => {
+  if (!req.session.user) return res.status(401).json({ error: 'not_authenticated' });
+  const { pairingId, outcome } = req.body ?? {};
+  if (typeof pairingId !== 'string' || !['win', 'loss'].includes(outcome)) {
+    return res.status(400).json({ error: 'invalid_body' });
+  }
+
+  const myTeamCaptainId = await getUserTeamCaptainId(req.session.user.id);
+  if (!myTeamCaptainId) {
+    return res.status(403).json({ error: 'not_on_a_team' });
+  }
+
+  const round = await reportResult(pairingId, myTeamCaptainId, outcome);
+  if (!round) {
+    return res.status(400).json({ error: 'invalid_report' });
+  }
+  res.json({ ok: true });
 });
 
 app.get('/api/league', async (req, res) => {

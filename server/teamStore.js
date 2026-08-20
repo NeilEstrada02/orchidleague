@@ -175,3 +175,19 @@ export async function removeMemberEverywhere(memberId) {
   }
   if (anyChanged) await saveTeams(teams);
 }
+
+// deltas: [{ captainId, outcome: 'win' | 'loss' }]
+export async function applyRoundResults(deltas) {
+  if (deltas.length === 0) return;
+  const teams = await loadTeams();
+  for (const { captainId, outcome } of deltas) {
+    const team = teams[captainId];
+    if (!team) continue;
+    if (outcome === 'win') {
+      team.wins = (team.wins ?? 0) + 1;
+    } else {
+      team.losses = (team.losses ?? 0) + 1;
+    }
+  }
+  await saveTeams(teams);
+}
