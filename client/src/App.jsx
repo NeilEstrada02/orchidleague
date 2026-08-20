@@ -263,6 +263,7 @@ function App() {
     <div className="landing">
       <div className="stack">
         <div className="card">
+          <img src="/logo.png" alt="Orchid League" className="site-logo" />
           <h1>Orchid League</h1>
           {!settings.signupsOpen && <p className="closed-banner">🔒 Signups are currently closed.</p>}
           {loading ? (

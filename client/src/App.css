@@ -1,9 +1,28 @@
+:root {
+  --bg-page-start: #202023;
+  --bg-page-end: #121213;
+  --bg-card: #1b1b1e;
+  --bg-inset: #242427;
+  --border: #333336;
+  --text-primary: #f2f2f5;
+  --text-secondary: #a8a8ac;
+  --text-muted: #6e6e72;
+  --accent: #da70d6;
+  --accent-hover: #c25ac0;
+  --accent-soft-bg: rgba(218, 112, 214, 0.15);
+  --accent-soft-border: rgba(218, 112, 214, 0.4);
+  --accent-text: #edb9ea;
+  --danger: #f28b82;
+  --danger-soft-bg: rgba(242, 139, 130, 0.12);
+  --danger-soft-border: rgba(242, 139, 130, 0.4);
+}
+
 .landing {
   min-height: 100vh;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: radial-gradient(circle at top, #1e1f26 0%, #101116 100%);
+  background: radial-gradient(circle at top, var(--bg-page-start) 0%, var(--bg-page-end) 100%);
   padding: 2rem 1rem;
 }
 
@@ -16,12 +35,19 @@
 }
 
 .card {
-  background: #17181f;
-  border: 1px solid #2a2b35;
+  background: var(--bg-card);
+  border: 1px solid var(--border);
   border-radius: 16px;
   padding: 3rem 3.5rem;
   text-align: center;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.4);
+}
+
+.site-logo {
+  display: block;
+  width: 140px;
+  max-width: 100%;
+  margin: 0 auto 1rem;
 }
 
 .roster-card {
@@ -33,7 +59,7 @@
 .roster-card h2 {
   margin: 0 0 1rem;
   font-size: 1.25rem;
-  color: #f2f2f5;
+  color: var(--text-primary);
 }
 
 .roster-list {
@@ -46,8 +72,8 @@
 }
 
 .roster-list li {
-  color: #f2f2f5;
-  background: #1f2029;
+  color: var(--text-primary);
+  background: var(--bg-inset);
   border-radius: 6px;
   padding: 0.5rem 0.75rem;
 }
@@ -57,7 +83,7 @@
   align-items: center;
   justify-content: center;
   gap: 0.6rem;
-  color: #f2f2f5;
+  color: var(--text-primary);
   font-weight: 500;
   margin-bottom: 1.5rem;
   cursor: pointer;
@@ -66,24 +92,24 @@
 .enroll-toggle input {
   width: 1.1rem;
   height: 1.1rem;
-  accent-color: #5865f2;
+  accent-color: var(--accent);
   cursor: pointer;
 }
 
 .card h1 {
   margin: 0 0 0.5rem;
   font-size: 2.25rem;
-  color: #f2f2f5;
+  color: var(--text-primary);
 }
 
 .subtitle,
 .greeting {
-  color: #a7a8b3;
+  color: var(--text-secondary);
   margin: 0 0 1.75rem;
 }
 
 .greeting {
-  color: #f2f2f5;
+  color: var(--text-primary);
   font-size: 1.1rem;
 }
 
@@ -106,8 +132,8 @@
 
 .secondary-btn {
   background: transparent;
-  border: 1px solid #2a2b35;
-  color: #a7a8b3;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
   padding: 0.6rem 1.5rem;
   border-radius: 8px;
   cursor: pointer;
@@ -115,12 +141,12 @@
 }
 
 .secondary-btn:hover {
-  border-color: #5865f2;
-  color: #f2f2f5;
+  border-color: var(--accent);
+  color: var(--text-primary);
 }
 
 .error-text {
-  color: #f28b82;
+  color: var(--danger);
   font-size: 0.9rem;
   margin: -1rem 0 1.25rem;
 }
@@ -128,7 +154,7 @@
 .sub-heading {
   margin: 1.5rem 0 1rem;
   font-size: 1.05rem;
-  color: #f2f2f5;
+  color: var(--text-primary);
 }
 
 .team-slot {
@@ -143,18 +169,18 @@
 }
 
 .empty-slot {
-  color: #6b6d7a;
+  color: var(--text-muted);
   font-style: italic;
   background: transparent;
-  border: 1px dashed #2a2b35;
+  border: 1px dashed var(--border);
 }
 
 .tag {
   margin-left: 0.6rem;
   font-size: 0.75rem;
   font-weight: 600;
-  color: #c7c9f7;
-  background: rgba(88, 101, 242, 0.15);
+  color: var(--accent-text);
+  background: var(--accent-soft-bg);
   border-radius: 999px;
   padding: 0.15rem 0.6rem;
   vertical-align: middle;
@@ -163,7 +189,7 @@
 .link-btn {
   background: transparent;
   border: none;
-  color: #8891f2;
+  color: var(--accent-text);
   font-weight: 600;
   cursor: pointer;
   padding: 0;
@@ -171,11 +197,11 @@
 }
 
 .link-btn:hover {
-  color: #b5bbf7;
+  color: var(--accent);
 }
 
 .link-btn:disabled {
-  color: #55575f;
+  color: var(--text-muted);
   cursor: not-allowed;
 }
 
@@ -199,14 +225,14 @@
   display: flex;
   gap: 0.5rem;
   margin-bottom: 1.25rem;
-  border-bottom: 1px solid #2a2b35;
+  border-bottom: 1px solid var(--border);
 }
 
 .tab-btn {
   flex: 1;
   background: transparent;
   border: none;
-  color: #a7a8b3;
+  color: var(--text-secondary);
   font-weight: 600;
   padding: 0.6rem 0.5rem;
   cursor: pointer;
@@ -214,12 +240,12 @@
 }
 
 .tab-btn:hover {
-  color: #f2f2f5;
+  color: var(--text-primary);
 }
 
 .tab-btn.active {
-  color: #f2f2f5;
-  border-bottom-color: #5865f2;
+  color: var(--text-primary);
+  border-bottom-color: var(--accent);
 }
 
 .field-group {
@@ -231,16 +257,16 @@
 }
 
 .field-label {
-  color: #a7a8b3;
+  color: var(--text-secondary);
   font-size: 0.8rem;
   font-weight: 600;
   margin-top: 0.6rem;
 }
 
 .text-input {
-  background: #1f2029;
-  border: 1px solid #2a2b35;
-  color: #f2f2f5;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  color: var(--text-primary);
   border-radius: 6px;
   padding: 0.55rem 0.7rem;
   font-size: 0.95rem;
@@ -249,7 +275,7 @@
 
 .text-input:focus {
   outline: none;
-  border-color: #5865f2;
+  border-color: var(--accent);
 }
 
 .save-btn {
@@ -260,21 +286,21 @@
 .standings-table {
   width: 100%;
   border-collapse: collapse;
-  color: #f2f2f5;
+  color: var(--text-primary);
 }
 
 .standings-table th {
   text-align: left;
-  color: #a7a8b3;
+  color: var(--text-secondary);
   font-size: 0.8rem;
   font-weight: 600;
   padding: 0.4rem 0.6rem;
-  border-bottom: 1px solid #2a2b35;
+  border-bottom: 1px solid var(--border);
 }
 
 .standings-table td {
   padding: 0.55rem 0.6rem;
-  border-bottom: 1px solid #1f2029;
+  border-bottom: 1px solid var(--bg-inset);
 }
 
 .standings-table th:not(:first-child),
@@ -295,8 +321,8 @@
 
 .seat-card {
   flex: 1;
-  background: #1f2029;
-  border: 1px solid #2a2b35;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
   border-radius: 8px;
   padding: 0.75rem 0.5rem;
   text-align: center;
@@ -305,25 +331,25 @@
 }
 
 .seat-card:hover {
-  border-color: #5865f2;
+  border-color: var(--accent);
 }
 
 .seat-card.seat-selected {
-  border-color: #5865f2;
-  background: rgba(88, 101, 242, 0.15);
+  border-color: var(--accent);
+  background: var(--accent-soft-bg);
 }
 
 .seat-label {
   font-size: 0.75rem;
   font-weight: 600;
-  color: #a7a8b3;
+  color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.03em;
   margin-bottom: 0.4rem;
 }
 
 .seat-occupant {
-  color: #f2f2f5;
+  color: var(--text-primary);
   font-weight: 600;
   font-size: 0.95rem;
 }
@@ -335,9 +361,9 @@
 }
 
 .closed-banner {
-  background: rgba(242, 139, 130, 0.12);
-  border: 1px solid rgba(242, 139, 130, 0.4);
-  color: #f28b82;
+  background: var(--danger-soft-bg);
+  border: 1px solid var(--danger-soft-border);
+  color: var(--danger);
   border-radius: 8px;
   padding: 0.5rem 0.75rem;
   font-size: 0.85rem;
