@@ -587,6 +587,12 @@ function App() {
             >
               Pairings
             </button>
+            <button
+              className={`tab-btn ${activeTab === 'rules' ? 'active' : ''}`}
+              onClick={() => setActiveTab('rules')}
+            >
+              Rules
+            </button>
           </div>
 
           {activeTab === 'roster' && (
@@ -748,6 +754,34 @@ function App() {
                   </div>
                 ))
               )}
+            </>
+          )}
+
+          {activeTab === 'rules' && (
+            <>
+              <h2>Rules</h2>
+              <ul className="rules-list">
+                <li>
+                  <strong>Entry Fee:</strong> Each team captain must Venmo{' '}
+                  <a className="rules-link" href="https://venmo.com/neil-estrada-2" target="_blank" rel="noreferrer">
+                    @neil-estrada-2
+                  </a>{' '}
+                  $30 for the entry fee. All entry fees will be donated to the charity of the winning team's choice.
+                </li>
+                <li>
+                  <strong>Elimination:</strong> Teams play until they accumulate 3 losses, at which point they are
+                  eliminated.
+                </li>
+                <li>
+                  <strong>Top Cut:</strong> There will be a top cut to the top N teams (likely 4 or 2) depending on
+                  team count.
+                </li>
+                <li>
+                  <strong>Platforms:</strong> The <span className="format-standard">Standard</span> and{' '}
+                  <span className="format-pioneer">Pioneer</span> seats must play all matches on Magic Arena. The{' '}
+                  <span className="format-modern">Modern</span> seat must play all matches on MTGO.
+                </li>
+              </ul>
             </>
           )}
         </div>
