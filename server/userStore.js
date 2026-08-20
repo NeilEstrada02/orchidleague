@@ -30,6 +30,7 @@ export async function recordLogin(user) {
     enrolled: existing?.enrolled ?? false,
     enrolledAt: existing?.enrolledAt ?? null,
     isCaptain: existing?.isCaptain ?? false,
+    isAdmin: existing?.isAdmin ?? false,
   };
   await saveUsers(users);
 }
@@ -66,6 +67,15 @@ export async function setCaptain(id, isCaptain) {
   const existing = users[id];
   if (!existing) return null;
   existing.isCaptain = isCaptain;
+  await saveUsers(users);
+  return existing;
+}
+
+export async function setAdmin(id, isAdmin) {
+  const users = await loadUsers();
+  const existing = users[id];
+  if (!existing) return null;
+  existing.isAdmin = isAdmin;
   await saveUsers(users);
   return existing;
 }

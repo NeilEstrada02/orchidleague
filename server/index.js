@@ -148,6 +148,7 @@ app.get('/api/me', async (req, res) => {
       ...req.session.user,
       enrolled: stored?.enrolled ?? false,
       isCaptain: stored?.isCaptain ?? false,
+      isAdmin: stored?.isAdmin ?? false,
       team,
     },
   });
@@ -262,6 +263,7 @@ app.get('/api/league', async (req, res) => {
     displayName: u.displayName,
     enrolledAt: u.enrolledAt,
     isCaptain: u.isCaptain,
+    isAdmin: u.isAdmin ?? false,
     onTeam: u.isCaptain || memberIds.has(u.id),
   }));
   res.json({ users });

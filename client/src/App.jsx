@@ -336,6 +336,8 @@ function App() {
                 <ul className="roster-list">
                   {league.map((member) => (
                     <li key={member.id}>
+                      {member.isAdmin && <span title="Admin">👑 </span>}
+                      {member.isCaptain && <span title="Captain">🧑‍✈️ </span>}
                       {member.displayName}
                       {member.isCaptain && <span className="tag">Captain</span>}
                       {!member.isCaptain && member.onTeam && <span className="tag">On a team</span>}
