@@ -93,6 +93,15 @@ async function resolveTeam(team) {
   };
 }
 
+async function resolveSeatsSnapshot(snapshot) {
+  const result = {};
+  for (const seat of SEATS) {
+    const id = snapshot?.[seat] ?? null;
+    result[seat] = id ? { id, displayName: (await getUser(id))?.displayName ?? 'Unknown' } : null;
+  }
+  return result;
+}
+
 async function getUserTeamCaptainId(userId) {
   const stored = await getUser(userId);
   if (stored?.isCaptain) return userId;
@@ -344,11 +353,18 @@ app.get('/api/pairings', async (req, res) => {
         round.pairings.map(async (p) => {
           const teamAInfo = await resolveTeam(await getTeam(p.teamA));
           const teamBInfo = p.teamB ? await resolveTeam(await getTeam(p.teamB)) : null;
+          // Pairings generated before seat-snapshotting existed fall back to
+          // live seats; every pairing from here on uses the seats as they
+          // stood at the moment the round was generated, so a captain
+          // swapping seats mid-round doesn't retroactively change matchups
+          // already in progress.
+          const seatsA = p.seatsSnapshot ? await resolveSeatsSnapshot(p.seatsSnapshot.teamA) : teamAInfo.seats;
+          const seatsB = p.seatsSnapshot && teamBInfo ? await resolveSeatsSnapshot(p.seatsSnapshot.teamB) : teamBInfo?.seats;
           const matchups = teamBInfo
             ? SEATS.map((seat) => ({
                 seat,
-                playerA: teamAInfo.seats[seat],
-                playerB: teamBInfo.seats[seat],
+                playerA: seatsA[seat],
+                playerB: seatsB[seat],
               }))
             : [];
           return {

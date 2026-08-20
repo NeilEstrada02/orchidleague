@@ -122,13 +122,19 @@ export async function closeCurrentRound() {
   return { deltas, closed: true };
 }
 
-// eligibleTeams: [{ captainId, wins }]
+const BLANK_SEATS = { pioneer: null, modern: null, standard: null };
+
+// eligibleTeams: [{ captainId, wins, seats }]
 export async function generateNextRound(eligibleTeams) {
   const rounds = await loadRounds();
   const rematchSet = buildRematchSet(rounds);
   const byeHistory = buildByeHistory(rounds);
   const roundNumber = rounds.length + 1;
 
+  // Snapshot each team's current seat assignments at generation time, so
+  // later seat swaps only affect rounds generated after the swap -- this
+  // round's matchups stay exactly as they were when it was created.
+  const seatsById = new Map(eligibleTeams.map((t) => [t.captainId, t.seats ?? BLANK_SEATS]));
   const winsById = new Map(eligibleTeams.map((t) => [t.captainId, t.wins ?? 0]));
   let pool = shuffle(eligibleTeams.map((t) => t.captainId));
   pool.sort((a, b) => winsById.get(b) - winsById.get(a));
@@ -167,13 +173,25 @@ export async function generateNextRound(eligibleTeams) {
     }
     const pairs = pairGroupNoRematch(current, rematchSet) ?? [];
     for (const [a, b] of pairs) {
-      pairings.push({ teamA: a, teamB: b, result: null, reportedBy: null });
+      pairings.push({
+        teamA: a,
+        teamB: b,
+        result: null,
+        reportedBy: null,
+        seatsSnapshot: { teamA: seatsById.get(a), teamB: seatsById.get(b) },
+      });
       rematchSet.add(pairKey(a, b));
     }
   }
 
   if (byeTeam) {
-    pairings.push({ teamA: byeTeam, teamB: null, result: 'A', reportedBy: null });
+    pairings.push({
+      teamA: byeTeam,
+      teamB: null,
+      result: 'A',
+      reportedBy: null,
+      seatsSnapshot: { teamA: seatsById.get(byeTeam), teamB: null },
+    });
   }
 
   const withIds = pairings.map((p, idx) => ({ id: `r${roundNumber}-${idx + 1}`, ...p }));

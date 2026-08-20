@@ -495,6 +495,9 @@ function App() {
               <>
                 <h2 className="sub-heading">Seat Assignments</h2>
                 <p className="subtitle seat-hint">Drag a player onto another seat to swap them (or tap one, then tap another).</p>
+                <p className="subtitle seat-hint">
+                  ℹ️ Swaps only affect future rounds — your team's matchups for the current round are already locked in and won't change.
+                </p>
                 <div className="seat-grid">
                   {SEATS.map((seat) => {
                     const occupant = user.team.seats?.[seat] ?? null
