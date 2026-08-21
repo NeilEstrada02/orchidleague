@@ -23,6 +23,7 @@ function App() {
   const [settings, setSettings] = useState({ signupsOpen: true, dummyAccountsEnabled: false })
   const [settingsBusy, setSettingsBusy] = useState(false)
   const [pairings, setPairings] = useState([])
+  const [decklistsData, setDecklistsData] = useState({ round: null, formats: { pioneer: [], modern: [], standard: [] } })
   const [roundBusy, setRoundBusy] = useState(false)
   const [reportBusyId, setReportBusyId] = useState(null)
   const [resetBusy, setResetBusy] = useState(false)
@@ -60,10 +61,19 @@ function App() {
       .then((data) => setPairings(data.rounds ?? []))
       .catch(() => {})
 
-  const refreshAll = () => Promise.all([fetchMe(), fetchLeague(), fetchTeams(), fetchSettings(), fetchPairings()])
+  const fetchDecklists = () =>
+    fetch(`${SERVER_URL}/api/decklists`)
+      .then((res) => res.json())
+      .then((data) => setDecklistsData(data ?? { round: null, formats: { pioneer: [], modern: [], standard: [] } }))
+      .catch(() => {})
+
+  const refreshAll = () =>
+    Promise.all([fetchMe(), fetchLeague(), fetchTeams(), fetchSettings(), fetchPairings(), fetchDecklists()])
 
   useEffect(() => {
-    Promise.all([fetchMe(), fetchLeague(), fetchTeams(), fetchSettings(), fetchPairings()]).finally(() => setLoading(false))
+    Promise.all([fetchMe(), fetchLeague(), fetchTeams(), fetchSettings(), fetchPairings(), fetchDecklists()]).finally(() =>
+      setLoading(false)
+    )
 
     const params = new URLSearchParams(window.location.search)
     const err = params.get('error')
@@ -667,6 +677,12 @@ function App() {
               Pairings
             </button>
             <button
+              className={`tab-btn ${activeTab === 'decklists' ? 'active' : ''}`}
+              onClick={() => setActiveTab('decklists')}
+            >
+              Decklists
+            </button>
+            <button
               className={`tab-btn ${activeTab === 'rules' ? 'active' : ''}`}
               onClick={() => setActiveTab('rules')}
             >
@@ -773,6 +789,7 @@ function App() {
           {activeTab === 'pairings' && (
             <>
               <h2>Pairings</h2>
+              <p className="subtitle seat-hint">See the Decklists tab for this round's decklists.</p>
               {pairings.length === 0 ? (
                 <p className="subtitle">No rounds have been played yet.</p>
               ) : (
@@ -801,20 +818,8 @@ function App() {
                                   <li key={m.seat} className="matchup-row">
                                     <span className="matchup-format">{SEAT_LABELS[m.seat]}:</span>{' '}
                                     <span className={`format-${m.seat}`}>{m.playerA?.displayName ?? 'TBD'}</span>
-                                    {m.playerA?.decklist && (
-                                      <details className="decklist-details">
-                                        <summary>Decklist</summary>
-                                        <pre className="decklist-text">{m.playerA.decklist}</pre>
-                                      </details>
-                                    )}
                                     {' vs '}
                                     <span className={`format-${m.seat}`}>{m.playerB?.displayName ?? 'TBD'}</span>
-                                    {m.playerB?.decklist && (
-                                      <details className="decklist-details">
-                                        <summary>Decklist</summary>
-                                        <pre className="decklist-text">{m.playerB.decklist}</pre>
-                                      </details>
-                                    )}
                                   </li>
                                 ))}
                               </ul>
@@ -844,6 +849,49 @@ function App() {
                     </ul>
                   </div>
                 ))
+              )}
+            </>
+          )}
+
+          {activeTab === 'decklists' && (
+            <>
+              <h2>Decklists</h2>
+              {decklistsData.round === null ? (
+                <p className="subtitle">No round is currently in progress.</p>
+              ) : (
+                <>
+                  <p className="subtitle seat-hint">Decklists locked in for Round {decklistsData.round}.</p>
+                  {['standard', 'modern', 'pioneer'].map((seat) => (
+                    <div key={seat} className="decklist-format-section">
+                      <h3 className={`decklist-format-heading format-${seat}`}>{SEAT_LABELS[seat]}</h3>
+                      {decklistsData.formats[seat].length === 0 ? (
+                        <p className="subtitle">No one seated here this round.</p>
+                      ) : (
+                        <ul className="roster-list">
+                          {decklistsData.formats[seat].map((entry) => (
+                            <li key={entry.playerId} className="decklist-entry">
+                              <div className="decklist-entry-header">
+                                <span className={`format-${seat}`}>{entry.playerName}</span>
+                                <span className="subtitle">
+                                  {' '}
+                                  ({entry.teamName}){entry.opponentName ? ` vs ${entry.opponentName}` : ' — Bye'}
+                                </span>
+                              </div>
+                              {entry.decklist ? (
+                                <details className="decklist-details">
+                                  <summary>View Decklist</summary>
+                                  <pre className="decklist-text">{entry.decklist}</pre>
+                                </details>
+                              ) : (
+                                <span className="subtitle">No decklist submitted.</span>
+                              )}
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  ))}
+                </>
               )}
             </>
           )}

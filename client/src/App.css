@@ -537,9 +537,8 @@
 .decklist-details summary {
   cursor: pointer;
   color: var(--accent-text);
-  font-size: 0.8rem;
+  font-size: 0.85rem;
   font-weight: 600;
-  display: inline;
 }
 
 .decklist-details summary:hover {
@@ -552,11 +551,37 @@
   background: var(--bg-inset);
   border: 1px solid var(--border);
   border-radius: 6px;
-  padding: 0.6rem 0.75rem;
-  margin: 0.4rem 0 0;
-  font-size: 0.78rem;
+  padding: 0.85rem 1rem;
+  margin: 0.5rem 0 0;
+  font-size: 0.88rem;
+  line-height: 1.5;
   color: var(--text-primary);
-  max-height: 240px;
+  max-height: 520px;
   overflow-y: auto;
   font-family: ui-monospace, Consolas, monospace;
+}
+
+.decklist-format-section {
+  margin-bottom: 1.75rem;
+}
+
+.decklist-format-section:last-child {
+  margin-bottom: 0;
+}
+
+.decklist-format-heading {
+  margin: 0 0 0.75rem;
+  font-size: 1.05rem;
+  text-align: left;
+}
+
+.decklist-entry {
+  text-align: left;
+}
+
+.decklist-entry-header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.15rem;
 }

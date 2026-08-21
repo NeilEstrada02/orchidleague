@@ -27,6 +27,7 @@ import { getSettings, setSignupsOpen, setDummyAccountsEnabled } from './settings
 import { seedDummyAccounts, clearDummyAccounts } from './dummyAccounts.js';
 import {
   getRounds,
+  getCurrentRound,
   closeCurrentRound,
   generateNextRound,
   reportResult,
@@ -377,6 +378,50 @@ app.post('/api/team/seats/swap', async (req, res) => {
     return res.status(404).json({ error: 'team_not_found' });
   }
   res.json({ team: await resolveTeam(team) });
+});
+
+app.get('/api/decklists', async (req, res) => {
+  const round = await getCurrentRound();
+  const formats = { pioneer: [], modern: [], standard: [] };
+  if (!round) {
+    return res.json({ round: null, formats });
+  }
+
+  for (const p of round.pairings) {
+    const teamAInfo = await resolveTeam(await getTeam(p.teamA));
+    const teamBInfo = p.teamB ? await resolveTeam(await getTeam(p.teamB)) : null;
+    const seatsA = p.seatsSnapshot ? await resolveSeatsSnapshot(p.seatsSnapshot.teamA) : teamAInfo.seats;
+    const seatsB = p.seatsSnapshot && teamBInfo ? await resolveSeatsSnapshot(p.seatsSnapshot.teamB) : teamBInfo?.seats;
+    const decklistsA = p.decklistsSnapshot?.teamA ?? {};
+    const decklistsB = p.decklistsSnapshot?.teamB ?? {};
+    const teamAName = teamAInfo.teamName || `${teamAInfo.captainName}'s Team`;
+    const teamBName = teamBInfo ? teamBInfo.teamName || `${teamBInfo.captainName}'s Team` : null;
+
+    for (const seat of SEATS) {
+      const a = seatsA[seat];
+      if (a) {
+        formats[seat].push({
+          playerId: a.id,
+          playerName: a.displayName,
+          teamName: teamAName,
+          opponentName: seatsB?.[seat]?.displayName ?? null,
+          decklist: decklistsA[a.id] || '',
+        });
+      }
+      const b = seatsB?.[seat];
+      if (b) {
+        formats[seat].push({
+          playerId: b.id,
+          playerName: b.displayName,
+          teamName: teamBName,
+          opponentName: seatsA[seat]?.displayName ?? null,
+          decklist: decklistsB[b.id] || '',
+        });
+      }
+    }
+  }
+
+  res.json({ round: round.number, formats });
 });
 
 app.get('/api/pairings', async (req, res) => {
