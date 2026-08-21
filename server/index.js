@@ -34,6 +34,7 @@ import {
   resetRounds,
   backfillCurrentRoundSeats,
 } from './pairingStore.js';
+import { getRoundStartTime } from './schedule.js';
 
 dotenv.config();
 
@@ -76,6 +77,44 @@ app.use(
     },
   })
 );
+
+// Advances rounds automatically on schedule. Since Render's free tier can
+// sleep the whole process between visits, this can't rely on an in-process
+// timer alone -- instead every incoming request triggers this check (fired
+// in the background, never blocking the response), so the first visit after
+// a scheduled boundary catches it up. The in-process lock just prevents a
+// burst of concurrent requests from double-advancing.
+let autoAdvanceInProgress = false;
+async function maybeAutoAdvance() {
+  if (autoAdvanceInProgress) return;
+  autoAdvanceInProgress = true;
+  try {
+    const rounds = await getRounds();
+    let currentCount = rounds.length;
+    const now = Date.now();
+
+    while (getRoundStartTime(currentCount + 1).getTime() <= now) {
+      const closeResult = await closeCurrentRound();
+      if (closeResult.deltas.length > 0) {
+        await applyRoundResults(closeResult.deltas);
+      }
+      const allTeams = await getAllTeams();
+      const eligible = allTeams.filter((t) => t.memberIds.length === 2 && (t.losses ?? 0) < ELIMINATION_LOSSES);
+      if (eligible.length < 2) break;
+      const allUsers = await getAllUsers();
+      const decklistsById = new Map(allUsers.map((u) => [u.id, u.decklist ?? '']));
+      await generateNextRound(eligible, decklistsById);
+      currentCount++;
+    }
+  } finally {
+    autoAdvanceInProgress = false;
+  }
+}
+
+app.use((req, res, next) => {
+  maybeAutoAdvance().catch((err) => console.error('Auto-advance check failed:', err));
+  next();
+});
 
 async function resolveTeam(team) {
   if (!team) return null;
@@ -221,7 +260,9 @@ app.post('/auth/logout', (req, res) => {
 
 app.get('/api/settings', async (req, res) => {
   const settings = await getSettings();
-  res.json({ settings });
+  const rounds = await getRounds();
+  const nextRoundAt = getRoundStartTime(rounds.length + 1).toISOString();
+  res.json({ settings: { ...settings, nextRoundAt } });
 });
 
 app.post('/api/settings', async (req, res) => {

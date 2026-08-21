@@ -388,6 +388,20 @@
   cursor: not-allowed;
 }
 
+.countdown-text {
+  color: var(--accent-text);
+  font-weight: 600;
+  font-size: 0.95rem;
+  margin: 0 0 1.25rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.countdown-sub {
+  color: var(--text-secondary);
+  font-weight: 400;
+  font-size: 0.8rem;
+}
+
 .closed-banner {
   background: var(--danger-soft-bg);
   border: 1px solid var(--danger-soft-border);

@@ -30,6 +30,7 @@ function App() {
   const [dummyBusy, setDummyBusy] = useState(false)
   const [decklistDraft, setDecklistDraft] = useState('')
   const [decklistSaving, setDecklistSaving] = useState(false)
+  const [now, setNow] = useState(() => Date.now())
 
   const fetchMe = () =>
     fetch(`${SERVER_URL}/api/me`, { credentials: 'include' })
@@ -101,6 +102,12 @@ function App() {
   useEffect(() => {
     if (user) setDecklistDraft(user.decklist ?? '')
   }, [user?.id])
+
+  // Tick the clock for the round countdown.
+  useEffect(() => {
+    const interval = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(interval)
+  }, [])
 
   const handleLogout = async () => {
     await fetch(`${SERVER_URL}/auth/logout`, { method: 'POST', credentials: 'include' })
@@ -401,6 +408,29 @@ function App() {
 
   const teamLabel = (team) => team.teamName || `${team.captainName}'s Team`
 
+  const nextRoundAtMs = settings.nextRoundAt ? new Date(settings.nextRoundAt).getTime() : null
+  const countdownMs = nextRoundAtMs ? Math.max(0, nextRoundAtMs - now) : null
+  const countdownLabel = (() => {
+    if (countdownMs === null) return ''
+    const totalSeconds = Math.floor(countdownMs / 1000)
+    const days = Math.floor(totalSeconds / 86400)
+    const hours = Math.floor((totalSeconds % 86400) / 3600)
+    const minutes = Math.floor((totalSeconds % 3600) / 60)
+    const seconds = totalSeconds % 60
+    if (days > 0) return `${days}d ${hours}h ${minutes}m`
+    if (hours > 0) return `${hours}h ${minutes}m ${seconds}s`
+    return `${minutes}m ${seconds}s`
+  })()
+  const nextRoundAtLabel = nextRoundAtMs
+    ? new Date(nextRoundAtMs).toLocaleString(undefined, {
+        weekday: 'short',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      })
+    : ''
+
   const formatBySeat = {}
   teams.forEach((t) => {
     SEATS.forEach((seat) => {
@@ -431,6 +461,13 @@ function App() {
         <div className="card">
           <img src="/logo.png" alt="Orchid League" className="site-logo" />
           <h1>Orchid League</h1>
+          {nextRoundAtMs && (
+            <p className="countdown-text">
+              ⏳ Next round {countdownMs === 0 ? 'starting any moment' : `in ${countdownLabel}`}
+              <br />
+              <span className="countdown-sub">{nextRoundAtLabel}</span>
+            </p>
+          )}
           {!settings.signupsOpen && <p className="closed-banner">🔒 Signups are currently closed.</p>}
           {loading ? (
             <p className="subtitle">Loading...</p>
