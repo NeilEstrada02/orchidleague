@@ -564,10 +564,14 @@ app.post('/api/admin/send-decklist-reminder', async (req, res) => {
     return res.json({ sent: false, count: 0 });
   }
 
+  const rounds = await getRounds();
+  const nextRoundAt = getRoundStartTime(rounds.length + 1);
+
   const result = await sendDecklistReminder(
     DECKLIST_REMINDER_CHANNEL_ID,
     missing.map((u) => u.id),
-    CLIENT_URL
+    CLIENT_URL,
+    nextRoundAt
   );
   if (!result.ok) {
     return res.status(502).json({ error: 'send_failed' });

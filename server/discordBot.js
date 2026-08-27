@@ -148,10 +148,14 @@ export async function sendChannelMessage(channelId, content, mentionUserIds = []
 }
 
 // Sends one or more @-mention reminder messages (chunked to stay under
-// Discord's character limit) to every given user ID.
-export async function sendDecklistReminder(channelId, userIds, siteUrl) {
+// Discord's character limit) to every given user ID. nextRoundAt uses
+// Discord's native <t:...> timestamp tags, which render as a live,
+// auto-updating "in X days" in each viewer's own timezone -- more useful
+// than baking a static countdown string into the message text.
+export async function sendDecklistReminder(channelId, userIds, siteUrl, nextRoundAt) {
   if (!botConfigured()) return { ok: false, error: 'not_configured' };
-  const prefix = `⏰ Decklist reminder — you haven't submitted a decklist yet. Please add one on ${siteUrl} before the next round: `;
+  const unixSeconds = Math.floor(new Date(nextRoundAt).getTime() / 1000);
+  const prefix = `⏰ Decklist reminder — you haven't submitted a decklist yet. The next round starts <t:${unixSeconds}:R> (<t:${unixSeconds}:F>). Please add one on ${siteUrl} before then: `;
 
   const chunks = [];
   let current = [];
