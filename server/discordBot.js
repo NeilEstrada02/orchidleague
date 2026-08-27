@@ -14,6 +14,24 @@ function botHeaders() {
   };
 }
 
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+// Wraps a Discord REST call with 429 handling: waits the server-specified
+// retry_after and tries again, up to a few attempts, instead of silently
+// dropping the request the way a single fetch would.
+async function discordFetch(url, options, retries = 3) {
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    const res = await fetch(url, options);
+    if (res.status !== 429) return res;
+    const body = await res.json().catch(() => ({}));
+    const retryAfterMs = Math.ceil((body.retry_after ?? 1) * 1000) + 50;
+    await sleep(retryAfterMs);
+  }
+  return fetch(url, options);
+}
+
 // Gets the league role's ID, creating it in the guild the first time it's
 // needed. The bot's own role must sit above this role in the server's role
 // list, or Discord will refuse to let it assign/remove it.
@@ -23,7 +41,7 @@ export async function ensureLeagueRole() {
   if (settings.discordRoleId) return settings.discordRoleId;
 
   try {
-    const res = await fetch(`${DISCORD_API}/guilds/${process.env.DISCORD_GUILD_ID}/roles`, {
+    const res = await discordFetch(`${DISCORD_API}/guilds/${process.env.DISCORD_GUILD_ID}/roles`, {
       method: 'POST',
       headers: botHeaders(),
       body: JSON.stringify({ name: ROLE_NAME, mentionable: true }),
@@ -42,55 +60,66 @@ export async function ensureLeagueRole() {
 }
 
 export async function addRoleToMember(discordUserId) {
-  if (!botConfigured()) return;
+  if (!botConfigured()) return false;
   const roleId = await ensureLeagueRole();
-  if (!roleId) return;
+  if (!roleId) return false;
   try {
-    const res = await fetch(
+    const res = await discordFetch(
       `${DISCORD_API}/guilds/${process.env.DISCORD_GUILD_ID}/members/${discordUserId}/roles/${roleId}`,
       { method: 'PUT', headers: botHeaders() }
     );
     if (!res.ok) {
       console.error(`Failed to add Discord role to ${discordUserId}:`, res.status, await res.text());
+      return false;
     }
+    return true;
   } catch (err) {
     console.error(`Failed to add Discord role to ${discordUserId}:`, err);
+    return false;
   }
 }
 
 export async function removeRoleFromMember(discordUserId) {
-  if (!botConfigured()) return;
+  if (!botConfigured()) return false;
   const roleId = await ensureLeagueRole();
-  if (!roleId) return;
+  if (!roleId) return false;
   try {
-    const res = await fetch(
+    const res = await discordFetch(
       `${DISCORD_API}/guilds/${process.env.DISCORD_GUILD_ID}/members/${discordUserId}/roles/${roleId}`,
       { method: 'DELETE', headers: botHeaders() }
     );
     if (!res.ok) {
       console.error(`Failed to remove Discord role from ${discordUserId}:`, res.status, await res.text());
+      return false;
     }
+    return true;
   } catch (err) {
     console.error(`Failed to remove Discord role from ${discordUserId}:`, err);
+    return false;
   }
 }
 
 // Full reconciliation pass: makes sure every currently-enrolled user has the
-// role. Used for the initial rollout and to catch any drift.
+// role. Used for the initial rollout and to catch any drift. Paced with a
+// small delay between members to stay under Discord's per-route rate limit
+// rather than firing everything at once.
 export async function syncAllRoles(enrolledUsers) {
   if (!botConfigured()) {
-    return { synced: 0, skipped: true };
+    return { synced: 0, failed: 0, skipped: true };
   }
   const roleId = await ensureLeagueRole();
   if (!roleId) {
-    return { synced: 0, skipped: true };
+    return { synced: 0, failed: 0, skipped: true };
   }
   let synced = 0;
+  let failed = 0;
   for (const user of enrolledUsers) {
-    await addRoleToMember(user.id);
-    synced++;
+    const ok = await addRoleToMember(user.id);
+    if (ok) synced++;
+    else failed++;
+    await sleep(300);
   }
-  return { synced, skipped: false };
+  return { synced, failed, skipped: false };
 }
 
 export function isDiscordBotConfigured() {

@@ -412,7 +412,11 @@ function App() {
         setError(data.error === 'bot_not_configured' ? 'Discord bot is not configured yet.' : 'Could not sync Discord roles.')
         return
       }
-      setError('')
+      if (data.failed > 0) {
+        setError(`Synced ${data.synced}, but ${data.failed} failed -- check server logs and try again.`)
+      } else {
+        setError('')
+      }
     } catch {
       setError('Could not sync Discord roles.')
     } finally {
