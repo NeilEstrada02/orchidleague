@@ -35,6 +35,7 @@ import {
   backfillCurrentRoundSeats,
 } from './pairingStore.js';
 import { getRoundStartTime } from './schedule.js';
+import { addRoleToMember, removeRoleFromMember, syncAllRoles, isDiscordBotConfigured } from './discordBot.js';
 
 dotenv.config();
 
@@ -262,7 +263,7 @@ app.get('/api/settings', async (req, res) => {
   const settings = await getSettings();
   const rounds = await getRounds();
   const nextRoundAt = getRoundStartTime(rounds.length + 1).toISOString();
-  res.json({ settings: { ...settings, nextRoundAt } });
+  res.json({ settings: { ...settings, nextRoundAt, discordBotConfigured: isDiscordBotConfigured() } });
 });
 
 app.post('/api/settings', async (req, res) => {
@@ -289,9 +290,12 @@ app.post('/api/enroll', async (req, res) => {
   }
   const id = req.session.user.id;
   const updated = await setEnrollment(id, req.body.enrolled);
-  if (!req.body.enrolled) {
+  if (req.body.enrolled) {
+    await addRoleToMember(id);
+  } else {
     await disbandTeam(id);
     await removeMemberEverywhere(id);
+    await removeRoleFromMember(id);
   }
   res.json({ enrolled: updated.enrolled });
 });
@@ -537,6 +541,20 @@ app.post('/api/admin/dummy-accounts', async (req, res) => {
   }
   const settings = await setDummyAccountsEnabled(req.body.enabled);
   res.json({ settings });
+});
+
+app.post('/api/admin/sync-discord-roles', async (req, res) => {
+  if (!req.session.user) return res.status(401).json({ error: 'not_authenticated' });
+  const stored = await getUser(req.session.user.id);
+  if (!stored?.isAdmin) {
+    return res.status(403).json({ error: 'not_admin' });
+  }
+  if (!isDiscordBotConfigured()) {
+    return res.status(400).json({ error: 'bot_not_configured' });
+  }
+  const enrolled = await getEnrolledUsers();
+  const result = await syncAllRoles(enrolled);
+  res.json(result);
 });
 
 app.post('/api/pairings/advance', async (req, res) => {

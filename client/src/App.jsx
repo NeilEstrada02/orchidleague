@@ -28,6 +28,7 @@ function App() {
   const [reportBusyId, setReportBusyId] = useState(null)
   const [resetBusy, setResetBusy] = useState(false)
   const [dummyBusy, setDummyBusy] = useState(false)
+  const [discordSyncBusy, setDiscordSyncBusy] = useState(false)
   const [decklistDraft, setDecklistDraft] = useState('')
   const [decklistSaving, setDecklistSaving] = useState(false)
   const [now, setNow] = useState(() => Date.now())
@@ -396,6 +397,29 @@ function App() {
     }
   }
 
+  const handleSyncDiscordRoles = async () => {
+    if (!window.confirm("Give every enrolled player the Orchid League Discord role now? This checks everyone, not just new signups.")) return
+
+    setDiscordSyncBusy(true)
+    setError('')
+    try {
+      const res = await fetch(`${SERVER_URL}/api/admin/sync-discord-roles`, {
+        method: 'POST',
+        credentials: 'include',
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        setError(data.error === 'bot_not_configured' ? 'Discord bot is not configured yet.' : 'Could not sync Discord roles.')
+        return
+      }
+      setError('')
+    } catch {
+      setError('Could not sync Discord roles.')
+    } finally {
+      setDiscordSyncBusy(false)
+    }
+  }
+
   const candidates = user
     ? league.filter((member) => member.id !== user.id && !member.isCaptain && !member.onTeam)
     : []
@@ -508,6 +532,14 @@ function App() {
                   </button>
                   <button className="secondary-btn" disabled={dummyBusy} onClick={handleToggleDummyAccounts}>
                     {settings.dummyAccountsEnabled ? 'Remove Test Accounts' : 'Add Test Accounts'}
+                  </button>
+                  <button
+                    className="secondary-btn"
+                    disabled={discordSyncBusy || !settings.discordBotConfigured}
+                    onClick={handleSyncDiscordRoles}
+                    title={settings.discordBotConfigured ? '' : 'Set DISCORD_BOT_TOKEN to enable this'}
+                  >
+                    Sync Discord Roles
                   </button>
                 </div>
               )}
