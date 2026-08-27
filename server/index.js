@@ -27,7 +27,6 @@ import {
   getSettings,
   setSignupsOpen,
   setDummyAccountsEnabled,
-  setDiscordReminderChannelId,
 } from './settingsStore.js';
 import { seedDummyAccounts, clearDummyAccounts } from './dummyAccounts.js';
 import {
@@ -70,6 +69,7 @@ if (!DISCORD_CLIENT_ID || !DISCORD_CLIENT_SECRET || !DISCORD_REDIRECT_URI || !SE
 
 const isProduction = NODE_ENV === 'production';
 const ELIMINATION_LOSSES = 3;
+const DECKLIST_REMINDER_CHANNEL_ID = '1375356544417271900'; // #league-announcements
 
 const app = express();
 app.set('trust proxy', 1);
@@ -568,20 +568,6 @@ app.post('/api/admin/sync-discord-roles', async (req, res) => {
   res.json(result);
 });
 
-app.post('/api/admin/discord-reminder-channel', async (req, res) => {
-  if (!req.session.user) return res.status(401).json({ error: 'not_authenticated' });
-  const stored = await getUser(req.session.user.id);
-  if (!stored?.isAdmin) {
-    return res.status(403).json({ error: 'not_admin' });
-  }
-  const channelId = req.body?.channelId;
-  if (typeof channelId !== 'string' || !channelId.trim()) {
-    return res.status(400).json({ error: 'invalid_body' });
-  }
-  const settings = await setDiscordReminderChannelId(channelId.trim());
-  res.json({ settings });
-});
-
 app.post('/api/admin/send-decklist-reminder', async (req, res) => {
   if (!req.session.user) return res.status(401).json({ error: 'not_authenticated' });
   const stored = await getUser(req.session.user.id);
@@ -591,10 +577,6 @@ app.post('/api/admin/send-decklist-reminder', async (req, res) => {
   if (!isDiscordBotConfigured()) {
     return res.status(400).json({ error: 'bot_not_configured' });
   }
-  const settings = await getSettings();
-  if (!settings.discordReminderChannelId) {
-    return res.status(400).json({ error: 'channel_not_configured' });
-  }
 
   const enrolled = await getEnrolledUsers();
   const missing = enrolled.filter((u) => !u.decklist || !u.decklist.trim());
@@ -603,7 +585,7 @@ app.post('/api/admin/send-decklist-reminder', async (req, res) => {
   }
 
   const result = await sendDecklistReminder(
-    settings.discordReminderChannelId,
+    DECKLIST_REMINDER_CHANNEL_ID,
     missing.map((u) => u.id),
     CLIENT_URL
   );

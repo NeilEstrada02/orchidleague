@@ -5,8 +5,6 @@ const DEFAULTS = {
   signupsOpen: true,
   dummyAccountsEnabled: false,
   discordRoleId: null,
-  // #league-announcements
-  discordReminderChannelId: '1375356544417271900',
 };
 
 export async function getSettings() {
@@ -40,9 +38,3 @@ export async function setDiscordRoleId(roleId) {
   return settings;
 }
 
-export async function setDiscordReminderChannelId(channelId) {
-  const settings = await getSettings();
-  settings.discordReminderChannelId = channelId;
-  await redisClient.set(KEY, JSON.stringify(settings));
-  return settings;
-}
