@@ -29,6 +29,9 @@ function App() {
   const [resetBusy, setResetBusy] = useState(false)
   const [dummyBusy, setDummyBusy] = useState(false)
   const [discordSyncBusy, setDiscordSyncBusy] = useState(false)
+  const [reminderChannelDraft, setReminderChannelDraft] = useState('')
+  const [reminderChannelSaving, setReminderChannelSaving] = useState(false)
+  const [reminderSending, setReminderSending] = useState(false)
   const [decklistDraft, setDecklistDraft] = useState('')
   const [decklistSaving, setDecklistSaving] = useState(false)
   const [now, setNow] = useState(() => Date.now())
@@ -103,6 +106,12 @@ function App() {
   useEffect(() => {
     if (user) setDecklistDraft(user.decklist ?? '')
   }, [user?.id])
+
+  // Seed the reminder-channel draft whenever the saved value changes (also
+  // covers the case where settings loads after the user's admin status does).
+  useEffect(() => {
+    if (user?.isAdmin) setReminderChannelDraft(settings.discordReminderChannelId ?? '')
+  }, [user?.isAdmin, settings.discordReminderChannelId])
 
   // Tick the clock for the round countdown.
   useEffect(() => {
@@ -424,6 +433,54 @@ function App() {
     }
   }
 
+  const handleSaveReminderChannel = async () => {
+    if (!reminderChannelDraft.trim()) return
+    setReminderChannelSaving(true)
+    setError('')
+    try {
+      const res = await fetch(`${SERVER_URL}/api/admin/discord-reminder-channel`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ channelId: reminderChannelDraft }),
+      })
+      if (!res.ok) throw new Error('save failed')
+      await refreshAll()
+    } catch {
+      setError('Could not save the reminder channel.')
+    } finally {
+      setReminderChannelSaving(false)
+    }
+  }
+
+  const handleSendDecklistReminder = async () => {
+    if (!window.confirm("Post a message in Discord @-mentioning every enrolled player who hasn't submitted a decklist?")) return
+
+    setReminderSending(true)
+    setError('')
+    try {
+      const res = await fetch(`${SERVER_URL}/api/admin/send-decklist-reminder`, {
+        method: 'POST',
+        credentials: 'include',
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        const messages = {
+          bot_not_configured: 'Discord bot is not configured yet.',
+          channel_not_configured: 'Set a reminder channel ID first.',
+          send_failed: 'Discord rejected the message -- check the channel ID and bot permissions.',
+        }
+        setError(messages[data.error] ?? 'Could not send the reminder.')
+        return
+      }
+      setError(data.sent ? `Reminder sent, mentioning ${data.count} player(s).` : 'Everyone has already submitted a decklist!')
+    } catch {
+      setError('Could not send the reminder.')
+    } finally {
+      setReminderSending(false)
+    }
+  }
+
   const candidates = user
     ? league.filter((member) => member.id !== user.id && !member.isCaptain && !member.onTeam)
     : []
@@ -544,6 +601,32 @@ function App() {
                     title={settings.discordBotConfigured ? '' : 'Set DISCORD_BOT_TOKEN to enable this'}
                   >
                     Sync Discord Roles
+                  </button>
+                  <label className="field-label" htmlFor="reminderChannel">
+                    Reminder Channel ID
+                  </label>
+                  <input
+                    id="reminderChannel"
+                    className="text-input"
+                    type="text"
+                    value={reminderChannelDraft}
+                    placeholder="Discord channel ID"
+                    onChange={(e) => setReminderChannelDraft(e.target.value)}
+                  />
+                  <button
+                    className="secondary-btn"
+                    disabled={reminderChannelSaving || !reminderChannelDraft.trim()}
+                    onClick={handleSaveReminderChannel}
+                  >
+                    {reminderChannelSaving ? 'Saving...' : 'Save Channel'}
+                  </button>
+                  <button
+                    className="secondary-btn"
+                    disabled={reminderSending || !settings.discordBotConfigured || !settings.discordReminderChannelId}
+                    onClick={handleSendDecklistReminder}
+                    title={settings.discordReminderChannelId ? '' : 'Save a reminder channel ID first'}
+                  >
+                    Send Decklist Reminder
                   </button>
                 </div>
               )}

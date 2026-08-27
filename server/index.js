@@ -23,7 +23,12 @@ import {
   applyRoundResults,
   resetAllRecords,
 } from './teamStore.js';
-import { getSettings, setSignupsOpen, setDummyAccountsEnabled } from './settingsStore.js';
+import {
+  getSettings,
+  setSignupsOpen,
+  setDummyAccountsEnabled,
+  setDiscordReminderChannelId,
+} from './settingsStore.js';
 import { seedDummyAccounts, clearDummyAccounts } from './dummyAccounts.js';
 import {
   getRounds,
@@ -35,7 +40,13 @@ import {
   backfillCurrentRoundSeats,
 } from './pairingStore.js';
 import { getRoundStartTime } from './schedule.js';
-import { addRoleToMember, removeRoleFromMember, syncAllRoles, isDiscordBotConfigured } from './discordBot.js';
+import {
+  addRoleToMember,
+  removeRoleFromMember,
+  syncAllRoles,
+  sendDecklistReminder,
+  isDiscordBotConfigured,
+} from './discordBot.js';
 
 dotenv.config();
 
@@ -555,6 +566,51 @@ app.post('/api/admin/sync-discord-roles', async (req, res) => {
   const enrolled = await getEnrolledUsers();
   const result = await syncAllRoles(enrolled);
   res.json(result);
+});
+
+app.post('/api/admin/discord-reminder-channel', async (req, res) => {
+  if (!req.session.user) return res.status(401).json({ error: 'not_authenticated' });
+  const stored = await getUser(req.session.user.id);
+  if (!stored?.isAdmin) {
+    return res.status(403).json({ error: 'not_admin' });
+  }
+  const channelId = req.body?.channelId;
+  if (typeof channelId !== 'string' || !channelId.trim()) {
+    return res.status(400).json({ error: 'invalid_body' });
+  }
+  const settings = await setDiscordReminderChannelId(channelId.trim());
+  res.json({ settings });
+});
+
+app.post('/api/admin/send-decklist-reminder', async (req, res) => {
+  if (!req.session.user) return res.status(401).json({ error: 'not_authenticated' });
+  const stored = await getUser(req.session.user.id);
+  if (!stored?.isAdmin) {
+    return res.status(403).json({ error: 'not_admin' });
+  }
+  if (!isDiscordBotConfigured()) {
+    return res.status(400).json({ error: 'bot_not_configured' });
+  }
+  const settings = await getSettings();
+  if (!settings.discordReminderChannelId) {
+    return res.status(400).json({ error: 'channel_not_configured' });
+  }
+
+  const enrolled = await getEnrolledUsers();
+  const missing = enrolled.filter((u) => !u.decklist || !u.decklist.trim());
+  if (missing.length === 0) {
+    return res.json({ sent: false, count: 0 });
+  }
+
+  const result = await sendDecklistReminder(
+    settings.discordReminderChannelId,
+    missing.map((u) => u.id),
+    CLIENT_URL
+  );
+  if (!result.ok) {
+    return res.status(502).json({ error: 'send_failed' });
+  }
+  res.json({ sent: true, count: missing.length });
 });
 
 app.post('/api/pairings/advance', async (req, res) => {

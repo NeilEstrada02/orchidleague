@@ -122,6 +122,61 @@ export async function syncAllRoles(enrolledUsers) {
   return { synced, failed, skipped: false };
 }
 
+// Leaves headroom under Discord's 2000-character message cap.
+const MAX_CONTENT_LENGTH = 1800;
+
+export async function sendChannelMessage(channelId, content, mentionUserIds = []) {
+  if (!botConfigured()) return { ok: false, error: 'not_configured' };
+  try {
+    const res = await discordFetch(`${DISCORD_API}/channels/${channelId}/messages`, {
+      method: 'POST',
+      headers: botHeaders(),
+      body: JSON.stringify({
+        content,
+        allowed_mentions: { parse: [], users: mentionUserIds },
+      }),
+    });
+    if (!res.ok) {
+      console.error('Failed to send Discord message:', res.status, await res.text());
+      return { ok: false, error: 'send_failed' };
+    }
+    return { ok: true };
+  } catch (err) {
+    console.error('Failed to send Discord message:', err);
+    return { ok: false, error: 'send_failed' };
+  }
+}
+
+// Sends one or more @-mention reminder messages (chunked to stay under
+// Discord's character limit) to every given user ID.
+export async function sendDecklistReminder(channelId, userIds, siteUrl) {
+  if (!botConfigured()) return { ok: false, error: 'not_configured' };
+  const prefix = `⏰ Decklist reminder — you haven't submitted a decklist yet. Please add one on ${siteUrl} before the next round: `;
+
+  const chunks = [];
+  let current = [];
+  let currentLength = prefix.length;
+  for (const id of userIds) {
+    const mention = `<@${id}> `;
+    if (currentLength + mention.length > MAX_CONTENT_LENGTH && current.length > 0) {
+      chunks.push(current);
+      current = [];
+      currentLength = prefix.length;
+    }
+    current.push(id);
+    currentLength += mention.length;
+  }
+  if (current.length > 0) chunks.push(current);
+
+  for (const chunk of chunks) {
+    const content = prefix + chunk.map((id) => `<@${id}>`).join(' ');
+    const result = await sendChannelMessage(channelId, content, chunk);
+    if (!result.ok) return result;
+    await sleep(400);
+  }
+  return { ok: true, messageCount: chunks.length };
+}
+
 export function isDiscordBotConfigured() {
   return botConfigured();
 }
