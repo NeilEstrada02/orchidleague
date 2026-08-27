@@ -5,7 +5,8 @@ const DEFAULTS = {
   signupsOpen: true,
   dummyAccountsEnabled: false,
   discordRoleId: null,
-  discordReminderChannelId: null,
+  // #league-announcements
+  discordReminderChannelId: '1375356544417271900',
 };
 
 export async function getSettings() {
