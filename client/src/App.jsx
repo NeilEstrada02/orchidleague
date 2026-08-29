@@ -29,6 +29,7 @@ function App() {
   const [resetBusy, setResetBusy] = useState(false)
   const [dummyBusy, setDummyBusy] = useState(false)
   const [reminderSending, setReminderSending] = useState(false)
+  const [resultReminderSending, setResultReminderSending] = useState(false)
   const [decklistDraft, setDecklistDraft] = useState('')
   const [decklistSaving, setDecklistSaving] = useState(false)
   const [now, setNow] = useState(() => Date.now())
@@ -426,6 +427,37 @@ function App() {
     }
   }
 
+  const handleSendResultReminder = async () => {
+    if (!window.confirm("Post a message in Discord @-mentioning every member of every team that hasn't reported this round's result yet?")) return
+
+    setResultReminderSending(true)
+    setError('')
+    try {
+      const res = await fetch(`${SERVER_URL}/api/admin/send-result-reminder`, {
+        method: 'POST',
+        credentials: 'include',
+      })
+      const data = await res.json()
+      if (!res.ok) {
+        const messages = {
+          bot_not_configured: 'Discord bot is not configured yet.',
+          send_failed: 'Discord rejected the message -- check the channel and bot permissions.',
+        }
+        setError(messages[data.error] ?? 'Could not send the reminder.')
+        return
+      }
+      setError(
+        data.sent
+          ? `Reminder sent for ${data.matchCount} match(es), mentioning ${data.teamCount} team(s).`
+          : 'No open round, or everyone has already reported!'
+      )
+    } catch {
+      setError('Could not send the reminder.')
+    } finally {
+      setResultReminderSending(false)
+    }
+  }
+
   const candidates = user
     ? league.filter((member) => member.id !== user.id && !member.isCaptain && !member.onTeam)
     : []
@@ -545,6 +577,13 @@ function App() {
                     onClick={handleSendDecklistReminder}
                   >
                     Send Decklist Reminder
+                  </button>
+                  <button
+                    className="secondary-btn"
+                    disabled={resultReminderSending || !settings.discordBotConfigured}
+                    onClick={handleSendResultReminder}
+                  >
+                    Send Result Reminder
                   </button>
                 </div>
               )}

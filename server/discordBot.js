@@ -181,6 +181,40 @@ export async function sendDecklistReminder(channelId, userIds, siteUrl, nextRoun
   return { ok: true, messageCount: chunks.length };
 }
 
+// Sends one or more reminder messages listing every match in the current
+// round that hasn't reported a result yet, @-mentioning both full teams
+// (captain + members) per match so anyone involved can report it.
+// matches: [{ teamAName, teamBName, mentionIds: [id, ...] }]
+export async function sendResultReminder(channelId, matches, siteUrl, nextRoundAt) {
+  if (!botConfigured()) return { ok: false, error: 'not_configured' };
+  const unixSeconds = Math.floor(new Date(nextRoundAt).getTime() / 1000);
+  const header = `⏰ Result reminder — these matches haven't reported a result yet. Anyone who hasn't by <t:${unixSeconds}:R> (<t:${unixSeconds}:F>) gets an automatic loss. Report at ${siteUrl}:\n\n`;
+
+  const chunks = [];
+  let current = [];
+  let currentLength = header.length;
+  for (const m of matches) {
+    const line = `**${m.teamAName} vs ${m.teamBName}**: ${m.mentionIds.map((id) => `<@${id}>`).join(' ')}`;
+    if (currentLength + line.length + 1 > MAX_CONTENT_LENGTH && current.length > 0) {
+      chunks.push(current);
+      current = [];
+      currentLength = header.length;
+    }
+    current.push({ line, mentionIds: m.mentionIds });
+    currentLength += line.length + 1;
+  }
+  if (current.length > 0) chunks.push(current);
+
+  for (const chunk of chunks) {
+    const content = header + chunk.map((c) => c.line).join('\n');
+    const mentionIds = chunk.flatMap((c) => c.mentionIds);
+    const result = await sendChannelMessage(channelId, content, mentionIds);
+    if (!result.ok) return result;
+    await sleep(400);
+  }
+  return { ok: true, messageCount: chunks.length };
+}
+
 export function isDiscordBotConfigured() {
   return botConfigured();
 }

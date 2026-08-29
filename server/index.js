@@ -39,7 +39,13 @@ import {
   backfillCurrentRoundSeats,
 } from './pairingStore.js';
 import { getRoundStartTime } from './schedule.js';
-import { addRoleToMember, removeRoleFromMember, sendDecklistReminder, isDiscordBotConfigured } from './discordBot.js';
+import {
+  addRoleToMember,
+  removeRoleFromMember,
+  sendDecklistReminder,
+  sendResultReminder,
+  isDiscordBotConfigured,
+} from './discordBot.js';
 
 dotenv.config();
 
@@ -63,7 +69,7 @@ if (!DISCORD_CLIENT_ID || !DISCORD_CLIENT_SECRET || !DISCORD_REDIRECT_URI || !SE
 
 const isProduction = NODE_ENV === 'production';
 const ELIMINATION_LOSSES = 3;
-const DECKLIST_REMINDER_CHANNEL_ID = '1375356544417271900'; // #league-announcements
+const REMINDER_CHANNEL_ID = '1375356544417271900'; // #league-announcements
 
 const app = express();
 app.set('trust proxy', 1);
@@ -568,7 +574,7 @@ app.post('/api/admin/send-decklist-reminder', async (req, res) => {
   const nextRoundAt = getRoundStartTime(rounds.length + 1);
 
   const result = await sendDecklistReminder(
-    DECKLIST_REMINDER_CHANNEL_ID,
+    REMINDER_CHANNEL_ID,
     missing.map((u) => u.id),
     CLIENT_URL,
     nextRoundAt
@@ -577,6 +583,50 @@ app.post('/api/admin/send-decklist-reminder', async (req, res) => {
     return res.status(502).json({ error: 'send_failed' });
   }
   res.json({ sent: true, count: missing.length });
+});
+
+app.post('/api/admin/send-result-reminder', async (req, res) => {
+  if (!req.session.user) return res.status(401).json({ error: 'not_authenticated' });
+  const stored = await getUser(req.session.user.id);
+  if (!stored?.isAdmin) {
+    return res.status(403).json({ error: 'not_admin' });
+  }
+  if (!isDiscordBotConfigured()) {
+    return res.status(400).json({ error: 'bot_not_configured' });
+  }
+
+  const round = await getCurrentRound();
+  if (!round) {
+    return res.json({ sent: false, matchCount: 0 });
+  }
+
+  const unreported = round.pairings.filter((p) => p.teamB && !p.result);
+  if (unreported.length === 0) {
+    return res.json({ sent: false, matchCount: 0 });
+  }
+
+  const matches = await Promise.all(
+    unreported.map(async (p) => {
+      const [teamA, teamB, captainA, captainB] = await Promise.all([
+        getTeam(p.teamA),
+        getTeam(p.teamB),
+        getUser(p.teamA),
+        getUser(p.teamB),
+      ]);
+      const teamAName = teamA?.teamName || `${captainA?.displayName ?? 'Unknown'}'s Team`;
+      const teamBName = teamB?.teamName || `${captainB?.displayName ?? 'Unknown'}'s Team`;
+      const mentionIds = [p.teamA, ...(teamA?.memberIds ?? []), p.teamB, ...(teamB?.memberIds ?? [])];
+      return { teamAName, teamBName, mentionIds };
+    })
+  );
+
+  const nextRoundAt = getRoundStartTime(round.number + 1);
+  const result = await sendResultReminder(REMINDER_CHANNEL_ID, matches, CLIENT_URL, nextRoundAt);
+  if (!result.ok) {
+    return res.status(502).json({ error: 'send_failed' });
+  }
+  const teamCount = new Set(unreported.flatMap((p) => [p.teamA, p.teamB])).size;
+  res.json({ sent: true, matchCount: unreported.length, teamCount });
 });
 
 app.post('/api/pairings/advance', async (req, res) => {
