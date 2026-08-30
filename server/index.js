@@ -170,6 +170,20 @@ async function getUserTeamCaptainId(userId) {
   return team?.captainId ?? null;
 }
 
+// Run whenever signups close: anyone enrolled but on no team (never
+// captained or joined one) is removed from the league -- their Discord
+// role goes with them, same as a normal self-unenroll.
+async function removeTeamlessEnrolledUsers() {
+  const [enrolled, allTeams] = await Promise.all([getEnrolledUsers(), getAllTeams()]);
+  const onTeamIds = new Set(allTeams.flatMap((t) => [t.captainId, ...t.memberIds]));
+  const teamless = enrolled.filter((u) => !onTeamIds.has(u.id));
+  for (const u of teamless) {
+    await setEnrollment(u.id, false);
+    await removeRoleFromMember(u.id);
+  }
+  return teamless.map((u) => u.id);
+}
+
 app.get('/auth/discord', (req, res) => {
   const params = new URLSearchParams({
     client_id: DISCORD_CLIENT_ID,
@@ -320,7 +334,12 @@ app.post('/api/settings', async (req, res) => {
     return res.status(400).json({ error: 'invalid_body' });
   }
   const settings = await setSignupsOpen(req.body.signupsOpen);
-  res.json({ settings });
+  let removedCount = 0;
+  if (!req.body.signupsOpen) {
+    const removed = await removeTeamlessEnrolledUsers();
+    removedCount = removed.length;
+  }
+  res.json({ settings, removedCount });
 });
 
 app.post('/api/enroll', async (req, res) => {

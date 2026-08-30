@@ -317,6 +317,14 @@ function App() {
   }
 
   const handleToggleSignups = async () => {
+    const closing = settings.signupsOpen
+    if (closing) {
+      const confirmed = window.confirm(
+        'Close signups? Anyone currently enrolled but not on any team will be removed from the league (and lose the Discord role) as part of closing.'
+      )
+      if (!confirmed) return
+    }
+
     setSettingsBusy(true)
     setError('')
     try {
@@ -327,7 +335,11 @@ function App() {
         body: JSON.stringify({ signupsOpen: !settings.signupsOpen }),
       })
       if (!res.ok) throw new Error('toggle failed')
+      const data = await res.json()
       await refreshAll()
+      if (closing && data.removedCount > 0) {
+        setError(`Signups closed. Removed ${data.removedCount} teamless player(s) from the league.`)
+      }
     } catch {
       setError('Could not update signup status.')
     } finally {
