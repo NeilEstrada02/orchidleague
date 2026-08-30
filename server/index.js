@@ -234,7 +234,18 @@ app.get('/auth/discord/callback', async (req, res) => {
 app.get('/api/me', async (req, res) => {
   if (!req.session.user) return res.json({ user: null });
   const stored = await getUser(req.session.user.id);
-  const team = stored?.isCaptain ? await resolveTeam(await getTeam(req.session.user.id)) : null;
+  let team = stored?.isCaptain ? await resolveTeam(await getTeam(req.session.user.id)) : null;
+  if (team) {
+    // Only exposed here, to the captain viewing their own team -- never via
+    // the public /api/teams, since decklists stay hidden until a round locks
+    // them in.
+    team = {
+      ...team,
+      members: await Promise.all(
+        team.members.map(async (m) => ({ ...m, decklist: (await getUser(m.id))?.decklist ?? '' }))
+      ),
+    };
+  }
   const myTeamCaptainId = await getUserTeamCaptainId(req.session.user.id);
   res.json({
     user: {
@@ -263,6 +274,28 @@ app.post('/api/decklist', async (req, res) => {
     return res.status(400).json({ error: 'too_long' });
   }
   const updated = await setDecklist(req.session.user.id, text);
+  res.json({ decklist: updated.decklist });
+});
+
+app.post('/api/team/member-decklist', async (req, res) => {
+  if (!req.session.user) return res.status(401).json({ error: 'not_authenticated' });
+  const captainId = req.session.user.id;
+  const captain = await getUser(captainId);
+  if (!captain?.isCaptain) {
+    return res.status(403).json({ error: 'not_a_captain' });
+  }
+  const { memberId, text } = req.body ?? {};
+  if (typeof memberId !== 'string' || typeof text !== 'string') {
+    return res.status(400).json({ error: 'invalid_body' });
+  }
+  if (text.length > 5000) {
+    return res.status(400).json({ error: 'too_long' });
+  }
+  const team = await getTeam(captainId);
+  if (!team?.memberIds.includes(memberId)) {
+    return res.status(403).json({ error: 'not_your_teammate' });
+  }
+  const updated = await setDecklist(memberId, text);
   res.json({ decklist: updated.decklist });
 });
 

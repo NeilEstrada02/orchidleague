@@ -32,6 +32,8 @@ function App() {
   const [resultReminderSending, setResultReminderSending] = useState(false)
   const [decklistDraft, setDecklistDraft] = useState('')
   const [decklistSaving, setDecklistSaving] = useState(false)
+  const [memberDecklistDrafts, setMemberDecklistDrafts] = useState({})
+  const [memberDecklistSaving, setMemberDecklistSaving] = useState(null)
   const [now, setNow] = useState(() => Date.now())
 
   const fetchMe = () =>
@@ -104,6 +106,17 @@ function App() {
   useEffect(() => {
     if (user) setDecklistDraft(user.decklist ?? '')
   }, [user?.id])
+
+  // Seed each teammate's decklist draft whenever the roster changes (not on
+  // every unrelated refresh, so an in-progress edit isn't clobbered).
+  const teamMemberIdsKey = user?.team?.members?.map((m) => m.id).join(',') ?? ''
+  useEffect(() => {
+    if (user?.team) {
+      const drafts = {}
+      for (const m of user.team.members) drafts[m.id] = m.decklist ?? ''
+      setMemberDecklistDrafts(drafts)
+    }
+  }, [teamMemberIdsKey])
 
 
   // Tick the clock for the round countdown.
@@ -281,6 +294,25 @@ function App() {
       setError('Could not save your decklist.')
     } finally {
       setDecklistSaving(false)
+    }
+  }
+
+  const handleSaveMemberDecklist = async (memberId) => {
+    setMemberDecklistSaving(memberId)
+    setError('')
+    try {
+      const res = await fetch(`${SERVER_URL}/api/team/member-decklist`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ memberId, text: memberDecklistDrafts[memberId] ?? '' }),
+      })
+      if (!res.ok) throw new Error('save failed')
+      await refreshAll()
+    } catch {
+      setError("Could not save that teammate's decklist.")
+    } finally {
+      setMemberDecklistSaving(null)
     }
   }
 
@@ -689,6 +721,36 @@ function App() {
                 </li>
               ))}
             </ul>
+
+            {user.team.members.length > 0 && (
+              <>
+                <h2 className="sub-heading">Teammates' Decklists</h2>
+                <p className="subtitle seat-hint">
+                  Edit on their behalf if they're stuck or unresponsive — this overwrites whatever they've saved.
+                </p>
+                {user.team.members.map((m) => (
+                  <details key={m.id} className="decklist-details member-decklist-editor">
+                    <summary>{m.displayName}'s Decklist</summary>
+                    <textarea
+                      className="text-input textarea-input"
+                      value={memberDecklistDrafts[m.id] ?? ''}
+                      maxLength={5000}
+                      placeholder="Paste their decklist..."
+                      onChange={(e) =>
+                        setMemberDecklistDrafts((prev) => ({ ...prev, [m.id]: e.target.value }))
+                      }
+                    />
+                    <button
+                      className="secondary-btn save-btn"
+                      disabled={memberDecklistSaving === m.id}
+                      onClick={() => handleSaveMemberDecklist(m.id)}
+                    >
+                      {memberDecklistSaving === m.id ? 'Saving...' : 'Save'}
+                    </button>
+                  </details>
+                ))}
+              </>
+            )}
 
             {user.team.members.length === 2 && (
               <>
