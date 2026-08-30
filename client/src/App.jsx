@@ -253,9 +253,8 @@ function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ teamName: teamNameDraft, charity: charityDraft }),
       })
-      const data = await res.json()
       if (!res.ok) {
-        setError(data.error === 'signups_closed' ? 'Signups are currently closed.' : 'Could not save team info.')
+        setError('Could not save team info.')
         return
       }
       await refreshAll()
@@ -644,7 +643,6 @@ function App() {
                 type="text"
                 maxLength={60}
                 value={teamNameDraft}
-                disabled={!settings.signupsOpen}
                 onChange={(e) => setTeamNameDraft(e.target.value)}
                 placeholder={`${user.displayName}'s Team`}
               />
@@ -657,13 +655,12 @@ function App() {
                 type="text"
                 maxLength={80}
                 value={charityDraft}
-                disabled={!settings.signupsOpen}
                 onChange={(e) => setCharityDraft(e.target.value)}
                 placeholder="Charity this team is playing for"
               />
               <button
                 className="secondary-btn save-btn"
-                disabled={savingInfo || !settings.signupsOpen}
+                disabled={savingInfo}
                 onClick={handleSaveTeamInfo}
               >
                 {savingInfo ? 'Saving...' : 'Save'}

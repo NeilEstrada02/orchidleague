@@ -389,10 +389,6 @@ app.post('/api/team/info', async (req, res) => {
   if (!captain?.isCaptain) {
     return res.status(403).json({ error: 'not_a_captain' });
   }
-  const settings = await getSettings();
-  if (!settings.signupsOpen) {
-    return res.status(403).json({ error: 'signups_closed' });
-  }
 
   const { teamName, charity } = req.body ?? {};
   if (typeof teamName !== 'string' || typeof charity !== 'string') {
