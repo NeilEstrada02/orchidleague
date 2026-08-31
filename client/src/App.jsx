@@ -888,6 +888,16 @@ function App() {
                       <span className={formatClass(member.id)}>{member.displayName}</span>
                       {member.isCaptain && <span className="tag">Captain</span>}
                       {!member.isCaptain && member.onTeam && <span className="tag">On a team</span>}
+                      {user?.isAdmin &&
+                        (member.hasDecklist ? (
+                          <span title="Decklist submitted" className="decklist-status decklist-status-yes">
+                            ✅
+                          </span>
+                        ) : (
+                          <span title="No decklist yet" className="decklist-status decklist-status-no">
+                            ⬜
+                          </span>
+                        ))}
                     </li>
                   ))}
                 </ul>

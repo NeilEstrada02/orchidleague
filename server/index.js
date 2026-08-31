@@ -723,6 +723,15 @@ app.post('/api/pairings/report', async (req, res) => {
 app.get('/api/league', async (req, res) => {
   const [enrolled, allTeams] = await Promise.all([getEnrolledUsers(), getAllTeams()]);
   const memberIds = new Set(allTeams.flatMap((t) => t.memberIds));
+
+  // Whether someone has a decklist on file is only shown to admins -- it's
+  // not exposed to the general public alongside the rest of the roster.
+  let requesterIsAdmin = false;
+  if (req.session.user) {
+    const requester = await getUser(req.session.user.id);
+    requesterIsAdmin = requester?.isAdmin ?? false;
+  }
+
   const users = enrolled.map((u) => ({
     id: u.id,
     displayName: u.displayName,
@@ -730,6 +739,7 @@ app.get('/api/league', async (req, res) => {
     isCaptain: u.isCaptain,
     isAdmin: u.isAdmin ?? false,
     onTeam: u.isCaptain || memberIds.has(u.id),
+    ...(requesterIsAdmin ? { hasDecklist: Boolean(u.decklist && u.decklist.trim()) } : {}),
   }));
   res.json({ users });
 });
