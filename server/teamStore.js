@@ -27,6 +27,7 @@ function blankTeam(captainId) {
     wins: 0,
     losses: 0,
     seats: { pioneer: null, modern: null, standard: null },
+    paid: false,
     updatedAt: new Date().toISOString(),
   };
 }
@@ -126,6 +127,16 @@ export async function removeMember(captainId, memberId) {
   for (const seat of SEATS) {
     if (seats[seat] === memberId) seats[seat] = null;
   }
+  team.updatedAt = new Date().toISOString();
+  await saveTeams(teams);
+  return team;
+}
+
+export async function setPaid(captainId, paid) {
+  const teams = await loadTeams();
+  const team = teams[captainId];
+  if (!team) return null;
+  team.paid = paid;
   team.updatedAt = new Date().toISOString();
   await saveTeams(teams);
   return team;

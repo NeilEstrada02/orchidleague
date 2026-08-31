@@ -242,6 +242,12 @@
   cursor: not-allowed;
 }
 
+.paid-toggle {
+  margin-left: 0.5rem;
+  font-size: 0.9rem;
+  vertical-align: middle;
+}
+
 .team-row {
   display: flex;
   flex-direction: column;

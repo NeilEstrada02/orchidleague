@@ -34,6 +34,7 @@ function App() {
   const [decklistSaving, setDecklistSaving] = useState(false)
   const [memberDecklistDrafts, setMemberDecklistDrafts] = useState({})
   const [memberDecklistSaving, setMemberDecklistSaving] = useState(null)
+  const [paidBusyId, setPaidBusyId] = useState(null)
   const [now, setNow] = useState(() => Date.now())
 
   const fetchMe = () =>
@@ -322,6 +323,25 @@ function App() {
       setError("Could not save that teammate's decklist.")
     } finally {
       setMemberDecklistSaving(null)
+    }
+  }
+
+  const handleTogglePaid = async (captainId, currentPaid) => {
+    setPaidBusyId(captainId)
+    setError('')
+    try {
+      const res = await fetch(`${SERVER_URL}/api/admin/team-paid`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ captainId, paid: !currentPaid }),
+      })
+      if (!res.ok) throw new Error('save failed')
+      await fetchTeams()
+    } catch {
+      setError('Could not update paid status.')
+    } finally {
+      setPaidBusyId(null)
     }
   }
 
@@ -926,6 +946,16 @@ function App() {
                       <strong>
                         {teamLabel(team)}
                         {team.eliminated && <span className="tag tag-eliminated">Eliminated</span>}
+                        {user?.isAdmin && (
+                          <button
+                            className="link-btn paid-toggle"
+                            disabled={paidBusyId === team.captainId}
+                            title={team.paid ? 'Paid — click to unmark' : 'Not paid — click to mark as paid'}
+                            onClick={() => handleTogglePaid(team.captainId, team.paid)}
+                          >
+                            {team.paid ? '💰' : '⬜'}
+                          </button>
+                        )}
                       </strong>
                       <span className="subtitle">
                         Captain: <span className={formatClass(team.captainId)}>{team.captainName}</span>

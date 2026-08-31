@@ -19,6 +19,7 @@ import {
   ensureTeam,
   setTeamInfo,
   swapSeats,
+  setPaid,
   SEATS,
   applyRoundResults,
   resetAllRecords,
@@ -746,9 +747,38 @@ app.get('/api/league', async (req, res) => {
   res.json({ users });
 });
 
+app.post('/api/admin/team-paid', async (req, res) => {
+  if (!req.session.user) return res.status(401).json({ error: 'not_authenticated' });
+  const stored = await getUser(req.session.user.id);
+  if (!stored?.isAdmin) {
+    return res.status(403).json({ error: 'not_admin' });
+  }
+  const { captainId, paid } = req.body ?? {};
+  if (typeof captainId !== 'string' || typeof paid !== 'boolean') {
+    return res.status(400).json({ error: 'invalid_body' });
+  }
+  const team = await setPaid(captainId, paid);
+  if (!team) return res.status(404).json({ error: 'team_not_found' });
+  res.json({ team: { ...(await resolveTeam(team)), paid: team.paid ?? false } });
+});
+
 app.get('/api/teams', async (req, res) => {
   const allTeams = await getAllTeams();
-  const resolved = await Promise.all(allTeams.map(resolveTeam));
+
+  // Whether a team has paid is admin-only, same as decklist-submission
+  // status on the roster -- never exposed to the general public.
+  let requesterIsAdmin = false;
+  if (req.session.user) {
+    const requester = await getUser(req.session.user.id);
+    requesterIsAdmin = requester?.isAdmin ?? false;
+  }
+
+  const resolved = await Promise.all(
+    allTeams.map(async (t) => {
+      const r = await resolveTeam(t);
+      return requesterIsAdmin ? { ...r, paid: t.paid ?? false } : r;
+    })
+  );
   resolved.sort((a, b) => a.captainName.localeCompare(b.captainName));
   res.json({ teams: resolved });
 });
