@@ -107,13 +107,22 @@ function App() {
     if (user) setDecklistDraft(user.decklist ?? '')
   }, [user?.id])
 
+  // Every teammate other than the viewer -- captain included -- each with
+  // their current decklist, so anyone on the team can edit anyone else's.
+  const teammates = user?.team
+    ? [
+        { id: user.team.captainId, displayName: user.team.captainName, decklist: user.team.captainDecklist ?? '' },
+        ...user.team.members,
+      ].filter((t) => t.id !== user.id)
+    : []
+
   // Seed each teammate's decklist draft whenever the roster changes (not on
   // every unrelated refresh, so an in-progress edit isn't clobbered).
-  const teamMemberIdsKey = user?.team?.members?.map((m) => m.id).join(',') ?? ''
+  const teamMemberIdsKey = teammates.map((m) => m.id).join(',')
   useEffect(() => {
     if (user?.team) {
       const drafts = {}
-      for (const m of user.team.members) drafts[m.id] = m.decklist ?? ''
+      for (const m of teammates) drafts[m.id] = m.decklist ?? ''
       setMemberDecklistDrafts(drafts)
     }
   }, [teamMemberIdsKey])
@@ -734,36 +743,6 @@ function App() {
               ))}
             </ul>
 
-            {user.team.members.length > 0 && (
-              <>
-                <h2 className="sub-heading">Teammates' Decklists</h2>
-                <p className="subtitle seat-hint">
-                  Edit on their behalf if they're stuck or unresponsive — this overwrites whatever they've saved.
-                </p>
-                {user.team.members.map((m) => (
-                  <details key={m.id} className="decklist-details member-decklist-editor">
-                    <summary>{m.displayName}'s Decklist</summary>
-                    <textarea
-                      className="text-input textarea-input"
-                      value={memberDecklistDrafts[m.id] ?? ''}
-                      maxLength={5000}
-                      placeholder="Paste their decklist..."
-                      onChange={(e) =>
-                        setMemberDecklistDrafts((prev) => ({ ...prev, [m.id]: e.target.value }))
-                      }
-                    />
-                    <button
-                      className="secondary-btn save-btn"
-                      disabled={memberDecklistSaving === m.id}
-                      onClick={() => handleSaveMemberDecklist(m.id)}
-                    >
-                      {memberDecklistSaving === m.id ? 'Saving...' : 'Save'}
-                    </button>
-                  </details>
-                ))}
-              </>
-            )}
-
             {user.team.members.length === 2 && (
               <>
                 <h2 className="sub-heading">Seat Assignments</h2>
@@ -831,6 +810,36 @@ function App() {
                 )}
               </>
             )}
+          </div>
+        )}
+
+        {user?.team && teammates.length > 0 && (
+          <div className="card roster-card">
+            <h2>Teammates' Decklists</h2>
+            <p className="subtitle seat-hint">
+              Edit on their behalf if they're stuck or unresponsive — this overwrites whatever they've saved.
+            </p>
+            {teammates.map((m) => (
+              <details key={m.id} className="decklist-details member-decklist-editor">
+                <summary>{m.displayName}'s Decklist</summary>
+                <textarea
+                  className="text-input textarea-input"
+                  value={memberDecklistDrafts[m.id] ?? ''}
+                  maxLength={5000}
+                  placeholder="Paste their decklist..."
+                  onChange={(e) =>
+                    setMemberDecklistDrafts((prev) => ({ ...prev, [m.id]: e.target.value }))
+                  }
+                />
+                <button
+                  className="secondary-btn save-btn"
+                  disabled={memberDecklistSaving === m.id}
+                  onClick={() => handleSaveMemberDecklist(m.id)}
+                >
+                  {memberDecklistSaving === m.id ? 'Saving...' : 'Save'}
+                </button>
+              </details>
+            ))}
           </div>
         )}
 

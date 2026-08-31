@@ -248,19 +248,20 @@ app.get('/auth/discord/callback', async (req, res) => {
 app.get('/api/me', async (req, res) => {
   if (!req.session.user) return res.json({ user: null });
   const stored = await getUser(req.session.user.id);
-  let team = stored?.isCaptain ? await resolveTeam(await getTeam(req.session.user.id)) : null;
+  const myTeamCaptainId = await getUserTeamCaptainId(req.session.user.id);
+  let team = myTeamCaptainId ? await resolveTeam(await getTeam(myTeamCaptainId)) : null;
   if (team) {
-    // Only exposed here, to the captain viewing their own team -- never via
+    // Only exposed here, to a member viewing their own team -- never via
     // the public /api/teams, since decklists stay hidden until a round locks
     // them in.
     team = {
       ...team,
+      captainDecklist: (await getUser(team.captainId))?.decklist ?? '',
       members: await Promise.all(
         team.members.map(async (m) => ({ ...m, decklist: (await getUser(m.id))?.decklist ?? '' }))
       ),
     };
   }
-  const myTeamCaptainId = await getUserTeamCaptainId(req.session.user.id);
   res.json({
     user: {
       ...req.session.user,
@@ -293,10 +294,10 @@ app.post('/api/decklist', async (req, res) => {
 
 app.post('/api/team/member-decklist', async (req, res) => {
   if (!req.session.user) return res.status(401).json({ error: 'not_authenticated' });
-  const captainId = req.session.user.id;
-  const captain = await getUser(captainId);
-  if (!captain?.isCaptain) {
-    return res.status(403).json({ error: 'not_a_captain' });
+  const requesterId = req.session.user.id;
+  const captainId = await getUserTeamCaptainId(requesterId);
+  if (!captainId) {
+    return res.status(403).json({ error: 'not_on_a_team' });
   }
   const { memberId, text } = req.body ?? {};
   if (typeof memberId !== 'string' || typeof text !== 'string') {
@@ -306,7 +307,8 @@ app.post('/api/team/member-decklist', async (req, res) => {
     return res.status(400).json({ error: 'too_long' });
   }
   const team = await getTeam(captainId);
-  if (!team?.memberIds.includes(memberId)) {
+  const rosterIds = [team?.captainId, ...(team?.memberIds ?? [])];
+  if (!rosterIds.includes(memberId)) {
     return res.status(403).json({ error: 'not_your_teammate' });
   }
   const updated = await setDecklist(memberId, text);
