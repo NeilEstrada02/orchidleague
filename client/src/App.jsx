@@ -35,6 +35,7 @@ function App() {
   const [memberDecklistDrafts, setMemberDecklistDrafts] = useState({})
   const [memberDecklistSaving, setMemberDecklistSaving] = useState(null)
   const [paidBusyId, setPaidBusyId] = useState(null)
+  const [copiedId, setCopiedId] = useState(null)
   const [now, setNow] = useState(() => Date.now())
 
   const fetchMe = () =>
@@ -323,6 +324,16 @@ function App() {
       setError("Could not save that teammate's decklist.")
     } finally {
       setMemberDecklistSaving(null)
+    }
+  }
+
+  const handleCopyDecklist = async (text, id) => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopiedId(id)
+      setTimeout(() => setCopiedId((current) => (current === id ? null : current)), 1500)
+    } catch {
+      setError('Could not copy to clipboard.')
     }
   }
 
@@ -1112,7 +1123,19 @@ function App() {
                               </div>
                               {entry.decklist ? (
                                 <details className="decklist-details">
-                                  <summary>View Decklist</summary>
+                                  <summary>
+                                    View Decklist
+                                    <button
+                                      className="link-btn copy-btn"
+                                      onClick={(e) => {
+                                        e.preventDefault()
+                                        e.stopPropagation()
+                                        handleCopyDecklist(entry.decklist, entry.playerId)
+                                      }}
+                                    >
+                                      {copiedId === entry.playerId ? 'Copied!' : 'Copy'}
+                                    </button>
+                                  </summary>
                                   <pre className="decklist-text">{entry.decklist}</pre>
                                 </details>
                               ) : (
