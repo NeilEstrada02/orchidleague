@@ -707,7 +707,7 @@ function App() {
     </div>
   )
 
-  const renderStandingsTable = (rows, { compact = false } = {}) => (
+  const renderStandingsTable = (rows) => (
     <table className="standings-table">
       <thead>
         <tr>
@@ -715,7 +715,7 @@ function App() {
           <th>Team</th>
           <th>W</th>
           <th>L</th>
-          {!compact && <th title="Opponents' match-win percentage">OMW%</th>}
+          <th title="Opponents' match-win percentage">OMW%</th>
         </tr>
       </thead>
       <tbody>
@@ -736,7 +736,7 @@ function App() {
               </td>
               <td>{team.wins}</td>
               <td>{team.losses}</td>
-              {!compact && <td>{formatOmw(team.omw)}</td>}
+              <td>{formatOmw(team.omw)}</td>
             </tr>
           )
         })}
@@ -876,13 +876,12 @@ function App() {
 
       {standings.length > 0 && (
         <section className="panel">
-          <div className="panel-head">
-            <h2>Standings</h2>
-            <button className="link-btn" onClick={() => navigate('standings')}>
-              Full standings →
-            </button>
-          </div>
-          {renderStandingsTable(standings.slice(0, 5), { compact: true })}
+          <h2>Standings</h2>
+          {renderStandingsTable(standings)}
+          <p className="muted small standings-note">
+            Ties are broken by OMW% — the average match-win percentage of the teams you've played (each opponent counts
+            for at least 33.3%, byes are ignored), based on completed rounds.
+          </p>
         </section>
       )}
     </div>
