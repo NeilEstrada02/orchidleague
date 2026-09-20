@@ -4,6 +4,12 @@ import './App.css'
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || ''
 const SEATS = ['pioneer', 'modern', 'standard']
 const SEAT_LABELS = { pioneer: 'Pioneer', modern: 'Modern', standard: 'Standard' }
+const TAB_IDS = ['home', 'myteam', 'pairings', 'standings', 'teams', 'decklists', 'roster', 'rules', 'admin']
+
+const tabFromHash = () => {
+  const id = window.location.hash.replace('#', '')
+  return TAB_IDS.includes(id) ? id : 'home'
+}
 
 function App() {
   const [user, setUser] = useState(null)
@@ -13,7 +19,10 @@ function App() {
   const [busy, setBusy] = useState(false)
   const [memberBusyId, setMemberBusyId] = useState(null)
   const [error, setError] = useState('')
-  const [activeTab, setActiveTab] = useState('roster')
+  const [activeTab, setActiveTab] = useState(tabFromHash)
+  const [selectedRound, setSelectedRound] = useState(null)
+  const [decklistFormat, setDecklistFormat] = useState('standard')
+  const [decklistFilter, setDecklistFilter] = useState('')
   const [teamNameDraft, setTeamNameDraft] = useState('')
   const [charityDraft, setCharityDraft] = useState('')
   const [savingInfo, setSavingInfo] = useState(false)
@@ -95,6 +104,20 @@ function App() {
       window.history.replaceState({}, '', window.location.pathname + (rest ? `?${rest}` : ''))
     }
   }, [])
+
+  // Keep the current page in the URL hash so refresh, back/forward and shared
+  // links land on the same page.
+  useEffect(() => {
+    const onHashChange = () => setActiveTab(tabFromHash())
+    window.addEventListener('hashchange', onHashChange)
+    return () => window.removeEventListener('hashchange', onHashChange)
+  }, [])
+
+  const navigate = (tab) => {
+    setActiveTab(tab)
+    window.location.hash = tab
+    window.scrollTo(0, 0)
+  }
 
   // Seed the editable draft fields once, when the captain panel first appears.
   useEffect(() => {
@@ -417,6 +440,10 @@ function App() {
   }
 
   const handleReportResult = async (pairingId, outcome) => {
+    const confirmed = window.confirm(
+      `Report that your team ${outcome === 'win' ? 'WON' : 'LOST'} this match? This can't be changed afterward.`
+    )
+    if (!confirmed) return
     setReportBusyId(pairingId)
     setError('')
     try {
@@ -648,451 +675,173 @@ function App() {
     return 'Pending'
   }
 
-  return (
-    <div className="landing">
-      <div className="stack">
-        <div className="card">
-          <img src="/logo.png" alt="Orchid League" className="site-logo" />
+  const openRound = pairings.find((r) => r.status === 'open') ?? null
+  const isMyPairing = (p) =>
+    Boolean(user?.myTeamCaptainId && (p.teamA.captainId === user.myTeamCaptainId || p.teamB?.captainId === user.myTeamCaptainId))
+  const myPairing = openRound ? (openRound.pairings.find(isMyPairing) ?? null) : null
+  const shownRound = pairings.find((r) => r.number === selectedRound) ?? pairings[0] ?? null
+  const myTeamName = user?.team ? user.team.teamName || `${user.team.captainName}'s Team` : null
+  const mySeatedTeam = user?.team && !user.isCaptain
+
+  const navTabs = [
+    { id: 'home', label: 'Home' },
+    ...(user?.enrolled ? [{ id: 'myteam', label: 'My Team' }] : []),
+    { id: 'pairings', label: 'Pairings' },
+    { id: 'standings', label: 'Standings' },
+    { id: 'teams', label: 'Teams' },
+    { id: 'decklists', label: 'Decklists' },
+    { id: 'roster', label: 'Roster' },
+    { id: 'rules', label: 'Rules' },
+    ...(user?.isAdmin ? [{ id: 'admin', label: 'Admin' }] : []),
+  ]
+  const page = navTabs.some((t) => t.id === activeTab) ? activeTab : 'home'
+
+  const renderReportButtons = (p) => (
+    <div className="pairing-actions">
+      <button className="link-btn" disabled={reportBusyId === p.id} onClick={() => handleReportResult(p.id, 'win')}>
+        We Won
+      </button>
+      <button className="link-btn" disabled={reportBusyId === p.id} onClick={() => handleReportResult(p.id, 'loss')}>
+        We Lost
+      </button>
+    </div>
+  )
+
+  const renderStandingsTable = (rows, { compact = false } = {}) => (
+    <table className="standings-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Team</th>
+          <th>W</th>
+          <th>L</th>
+          {!compact && <th title="Opponents' match-win percentage">OMW%</th>}
+        </tr>
+      </thead>
+      <tbody>
+        {rows.map((team, idx) => {
+          const classes = [
+            team.eliminated ? 'standings-eliminated' : '',
+            user?.myTeamCaptainId === team.captainId ? 'standings-mine' : '',
+          ]
+            .filter(Boolean)
+            .join(' ')
+          return (
+            <tr key={team.captainId} className={classes}>
+              <td className="rank-cell">{idx + 1}</td>
+              <td>
+                {team.eliminated && <span title="Eliminated">❌ </span>}
+                <span className={team.eliminated ? 'eliminated-name' : ''}>{teamLabel(team)}</span>
+                {team.eliminated && <span className="tag tag-eliminated">Eliminated</span>}
+              </td>
+              <td>{team.wins}</td>
+              <td>{team.losses}</td>
+              {!compact && <td>{formatOmw(team.omw)}</td>}
+            </tr>
+          )
+        })}
+      </tbody>
+    </table>
+  )
+
+  // ---------- Home ----------
+
+  const renderHome = () => (
+    <div className="stack-col">
+      <section className="panel hero">
+        <img src="/logo.png" alt="Orchid League" className="hero-logo" />
+        <div className="hero-text">
           <h1>Orchid League</h1>
-          {nextRoundAtMs && (
-            <p className="countdown-text">
-              ⏳ Next round {countdownMs === 0 ? 'starting any moment' : `in ${countdownLabel}`}
-              <br />
-              <span className="countdown-sub">{nextRoundAtLabel}</span>
-            </p>
-          )}
+          <p className="hero-tagline">
+            {user
+              ? `Welcome, ${user.displayName}!`
+              : 'Three-player teams · Standard, Modern & Pioneer · Playing for charity'}
+          </p>
           {!settings.signupsOpen && <p className="closed-banner">🔒 Signups are currently closed.</p>}
-          {loading ? (
-            <p className="subtitle">Loading...</p>
-          ) : user ? (
-            <>
-              <p className="greeting">Welcome, {user.displayName}!</p>
+        </div>
+        {nextRoundAtMs && (
+          <div className="hero-countdown">
+            <div className="hero-countdown-label">{openRound ? 'Results due & next round in' : 'Next round in'}</div>
+            <div className="hero-countdown-value">{countdownMs === 0 ? 'Any moment' : countdownLabel}</div>
+            <div className="countdown-sub">{nextRoundAtLabel}</div>
+          </div>
+        )}
+      </section>
+
+      <div className="grid-2">
+        {user ? (
+          <section className="panel">
+            <h2>Your Status</h2>
+            <label className="enroll-toggle">
+              <input
+                type="checkbox"
+                checked={user.enrolled}
+                disabled={busy || !settings.signupsOpen}
+                onChange={handleToggleEnroll}
+              />
+              Enroll in the League
+            </label>
+            {user.enrolled && (
               <label className="enroll-toggle">
                 <input
                   type="checkbox"
-                  checked={user.enrolled}
+                  checked={user.isCaptain}
                   disabled={busy || !settings.signupsOpen}
-                  onChange={handleToggleEnroll}
+                  onChange={handleToggleCaptain}
                 />
-                Enroll in the League
+                I am the Team Captain
               </label>
-              {user.enrolled && (
-                <label className="enroll-toggle">
-                  <input
-                    type="checkbox"
-                    checked={user.isCaptain}
-                    disabled={busy || !settings.signupsOpen}
-                    onChange={handleToggleCaptain}
-                  />
-                  I am the Team Captain
-                </label>
-              )}
-              {user.isAdmin && (
-                <div className="admin-panel">
-                  <span className="field-label">Admin</span>
-                  <button className="secondary-btn" disabled={settingsBusy} onClick={handleToggleSignups}>
-                    {settings.signupsOpen ? 'Close Signups' : 'Open Signups'}
-                  </button>
-                  <button className="secondary-btn" disabled={roundBusy} onClick={handleAdvanceRound}>
-                    {advanceRoundLabel}
-                  </button>
-                  <button className="secondary-btn danger-btn" disabled={resetBusy} onClick={handleResetSeason}>
-                    Reset All Standings
-                  </button>
-                  <button className="secondary-btn" disabled={dummyBusy} onClick={handleToggleDummyAccounts}>
-                    {settings.dummyAccountsEnabled ? 'Remove Test Accounts' : 'Add Test Accounts'}
-                  </button>
-                  <button
-                    className="secondary-btn"
-                    disabled={reminderSending || !settings.discordBotConfigured}
-                    onClick={handleSendDecklistReminder}
-                  >
-                    Send Decklist Reminder
-                  </button>
-                  <button
-                    className="secondary-btn"
-                    disabled={resultReminderSending || !settings.discordBotConfigured}
-                    onClick={handleSendResultReminder}
-                  >
-                    Send Result Reminder
-                  </button>
-                </div>
-              )}
-              {error && <p className="error-text">{error}</p>}
-              <button className="secondary-btn" onClick={handleLogout}>
-                Log out
-              </button>
-            </>
-          ) : (
-            <>
-              <p className="subtitle">Sign in with Discord to get started.</p>
-              {loginError && <p className="error-text">{loginError}</p>}
-              <a className="discord-btn" href={`${SERVER_URL}/auth/discord`}>
-                Login with Discord
-              </a>
-            </>
-          )}
-        </div>
-
-        {user?.enrolled && (
-          <div className="card roster-card">
-            <h2>My Decklist</h2>
-            <p className="subtitle seat-hint">
-              Paste your decklist here. Edits only apply starting next round — whatever's saved when a round is
-              generated is what's shown for that round.
-            </p>
-            <textarea
-              className="text-input textarea-input"
-              value={decklistDraft}
-              maxLength={5000}
-              placeholder="Paste your decklist..."
-              onChange={(e) => setDecklistDraft(e.target.value)}
-            />
-            <button
-              className="secondary-btn save-btn"
-              disabled={decklistSaving}
-              onClick={handleSaveDecklist}
-            >
-              {decklistSaving ? 'Saving...' : 'Save Decklist'}
-            </button>
-          </div>
-        )}
-
-        {user?.isCaptain && user.team && (
-          <div className="card roster-card">
-            <h2>Your Team</h2>
-            {user.team.eliminated && (
-              <p className="closed-banner">❌ Your team has been eliminated (3 losses) and will not receive future pairings.</p>
             )}
-
-            <div className="field-group">
-              <label className="field-label" htmlFor="teamName">
-                Team Name
-              </label>
-              <input
-                id="teamName"
-                className="text-input"
-                type="text"
-                maxLength={60}
-                value={teamNameDraft}
-                onChange={(e) => setTeamNameDraft(e.target.value)}
-                placeholder={`${user.displayName}'s Team`}
-              />
-              <label className="field-label" htmlFor="charity">
-                Charity
-              </label>
-              <input
-                id="charity"
-                className="text-input"
-                type="text"
-                maxLength={80}
-                value={charityDraft}
-                onChange={(e) => setCharityDraft(e.target.value)}
-                placeholder="Charity this team is playing for"
-              />
-              <button
-                className="secondary-btn save-btn"
-                disabled={savingInfo}
-                onClick={handleSaveTeamInfo}
-              >
-                {savingInfo ? 'Saving...' : 'Save'}
-              </button>
-            </div>
-
-            <ul className="roster-list">
-              <li className="team-slot captain-slot">
-                <span className={formatClass(user.id)}>{user.displayName}</span> (Captain)
-              </li>
-              {user.team.members.map((m) => (
-                <li key={m.id} className="team-slot">
-                  <span className={formatClass(m.id)}>{m.displayName}</span>
-                  <button
-                    className="link-btn"
-                    disabled={memberBusyId === m.id || !settings.signupsOpen}
-                    onClick={() => handleRemoveMember(m.id)}
-                  >
-                    Remove
-                  </button>
+            {user.enrolled && (
+              <ul className="status-list">
+                <li>
+                  <span>Team</span>
+                  <span>{myTeamName ?? 'Not on a team yet'}</span>
                 </li>
-              ))}
-              {Array.from({ length: 2 - user.team.members.length }).map((_, i) => (
-                <li key={`empty-${i}`} className="team-slot empty-slot">
-                  Open slot
+                <li>
+                  <span>Decklist</span>
+                  <span>
+                    {user.decklist?.trim() ? '✅ Submitted' : '⬜ Not submitted'}{' '}
+                    <button className="link-btn" onClick={() => navigate('myteam')}>
+                      {user.decklist?.trim() ? 'Edit' : 'Add one'}
+                    </button>
+                  </span>
                 </li>
-              ))}
-            </ul>
-
-            {user.team.members.length === 2 && (
-              <>
-                <h2 className="sub-heading">Seat Assignments</h2>
-                <p className="subtitle seat-hint">Drag a player onto another seat to swap them (or tap one, then tap another).</p>
-                <p className="subtitle seat-hint">
-                  ℹ️ Swaps only affect future rounds — your team's matchups for the current round are already locked in and won't change.
-                </p>
-                <div className="seat-grid">
-                  {SEATS.map((seat) => {
-                    const occupant = user.team.seats?.[seat] ?? null
-                    const isSelected = selectedSeat === seat
-                    return (
-                      <div
-                        key={seat}
-                        className={`seat-card ${isSelected ? 'seat-selected' : ''}`}
-                        draggable={!busy}
-                        onDragStart={() => setDragSeat(seat)}
-                        onDragOver={(e) => e.preventDefault()}
-                        onDrop={(e) => {
-                          e.preventDefault()
-                          if (dragSeat && dragSeat !== seat) handleSwapSeats(dragSeat, seat)
-                          setDragSeat(null)
-                        }}
-                        onClick={() => {
-                          if (busy) return
-                          if (selectedSeat === null) {
-                            setSelectedSeat(seat)
-                          } else if (selectedSeat === seat) {
-                            setSelectedSeat(null)
-                          } else {
-                            handleSwapSeats(selectedSeat, seat)
-                            setSelectedSeat(null)
-                          }
-                        }}
-                      >
-                        <div className="seat-label">{SEAT_LABELS[seat]}</div>
-                        <div className={`seat-occupant format-${seat}`}>{occupant?.displayName ?? '—'}</div>
-                      </div>
-                    )
-                  })}
-                </div>
-              </>
+              </ul>
             )}
-
-            {user.team.members.length < 2 && (
-              <>
-                <h2 className="sub-heading">Add a Teammate</h2>
-                {candidates.length === 0 ? (
-                  <p className="subtitle">No eligible players available right now.</p>
-                ) : (
-                  <ul className="roster-list">
-                    {candidates.map((c) => (
-                      <li key={c.id} className="team-slot">
-                        {c.displayName}
-                        <button
-                          className="link-btn"
-                          disabled={memberBusyId === c.id || !settings.signupsOpen}
-                          onClick={() => handleAddMember(c.id)}
-                        >
-                          Add
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
-              </>
+            {!user.enrolled && settings.signupsOpen && (
+              <p className="muted">Tick the box above to join. Captains then build their team of three.</p>
             )}
-          </div>
-        )}
-
-        {user?.team && teammates.length > 0 && (
-          <div className="card roster-card">
-            <h2>Teammates' Decklists</h2>
-            <p className="subtitle seat-hint">
-              Edit on their behalf if they're stuck or unresponsive — this overwrites whatever they've saved.
+          </section>
+        ) : (
+          <section className="panel">
+            <h2>Join the League</h2>
+            <p className="muted">
+              Sign in with Discord to enroll, join a team and report results. You need to be a member of the Orchid
+              League Discord server.
             </p>
-            {teammates.map((m) => (
-              <details key={m.id} className="decklist-details member-decklist-editor">
-                <summary>{m.displayName}'s Decklist</summary>
-                <textarea
-                  className="text-input textarea-input"
-                  value={memberDecklistDrafts[m.id] ?? ''}
-                  maxLength={5000}
-                  placeholder="Paste their decklist..."
-                  onChange={(e) =>
-                    setMemberDecklistDrafts((prev) => ({ ...prev, [m.id]: e.target.value }))
-                  }
-                />
-                <button
-                  className="secondary-btn save-btn"
-                  disabled={memberDecklistSaving === m.id}
-                  onClick={() => handleSaveMemberDecklist(m.id)}
-                >
-                  {memberDecklistSaving === m.id ? 'Saving...' : 'Save'}
-                </button>
-              </details>
-            ))}
-          </div>
+            {loginError && <p className="inline-error">{loginError}</p>}
+            <a className="discord-btn" href={`${SERVER_URL}/auth/discord`}>
+              Login with Discord
+            </a>
+          </section>
         )}
 
-        <div className="card roster-card wide-card">
-          <div className="tab-bar">
-            <button
-              className={`tab-btn ${activeTab === 'roster' ? 'active' : ''}`}
-              onClick={() => setActiveTab('roster')}
-            >
-              Roster
-            </button>
-            <button
-              className={`tab-btn ${activeTab === 'teams' ? 'active' : ''}`}
-              onClick={() => setActiveTab('teams')}
-            >
-              Teams
-            </button>
-            <button
-              className={`tab-btn ${activeTab === 'standings' ? 'active' : ''}`}
-              onClick={() => setActiveTab('standings')}
-            >
-              Standings
-            </button>
-            <button
-              className={`tab-btn ${activeTab === 'pairings' ? 'active' : ''}`}
-              onClick={() => setActiveTab('pairings')}
-            >
-              Pairings
-            </button>
-            <button
-              className={`tab-btn ${activeTab === 'decklists' ? 'active' : ''}`}
-              onClick={() => setActiveTab('decklists')}
-            >
-              Decklists
-            </button>
-            <button
-              className={`tab-btn ${activeTab === 'rules' ? 'active' : ''}`}
-              onClick={() => setActiveTab('rules')}
-            >
-              Rules
-            </button>
-          </div>
-
-          {activeTab === 'roster' && (
-            <>
-              <h2>League Roster</h2>
-              {league.length === 0 ? (
-                <p className="subtitle">No one has enrolled yet.</p>
-              ) : (
-                <ul className="roster-list">
-                  {league.map((member) => (
-                    <li key={member.id}>
-                      {member.isAdmin && <span title="Admin">👑 </span>}
-                      {member.isCaptain && <span title="Captain">🧑‍✈️ </span>}
-                      <span className={formatClass(member.id)}>{member.displayName}</span>
-                      {member.isCaptain && <span className="tag">Captain</span>}
-                      {!member.isCaptain && member.onTeam && <span className="tag">On a team</span>}
-                      {user?.isAdmin &&
-                        (member.hasDecklist ? (
-                          <span title="Decklist submitted" className="decklist-status decklist-status-yes">
-                            ✅
-                          </span>
-                        ) : (
-                          <span title="No decklist yet" className="decklist-status decklist-status-no">
-                            ⬜
-                          </span>
-                        ))}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </>
-          )}
-
-          {activeTab === 'teams' && (
-            <>
-              <h2>Teams</h2>
-              {teams.length === 0 ? (
-                <p className="subtitle">No teams have been formed yet.</p>
-              ) : (
-                <ul className="roster-list">
-                  {teams.map((team) => (
-                    <li key={team.captainId} className="team-row">
-                      <strong>
-                        {teamLabel(team)}
-                        {team.eliminated && <span className="tag tag-eliminated">Eliminated</span>}
-                        {user?.isAdmin && (
-                          <button
-                            className="link-btn paid-toggle"
-                            disabled={paidBusyId === team.captainId}
-                            title={team.paid ? 'Paid — click to unmark' : 'Not paid — click to mark as paid'}
-                            onClick={() => handleTogglePaid(team.captainId, team.paid)}
-                          >
-                            {team.paid ? '💰' : '⬜'}
-                          </button>
-                        )}
-                      </strong>
-                      <span className="subtitle">
-                        Captain: <span className={formatClass(team.captainId)}>{team.captainName}</span>
-                      </span>
-                      <span className="subtitle">
-                        {team.members.length === 0 ? (
-                          'no teammates yet'
-                        ) : (
-                          team.members.map((m, idx) => (
-                            <span key={m.id}>
-                              <span className={formatClass(m.id)}>{m.displayName}</span>
-                              {idx < team.members.length - 1 ? ', ' : ''}
-                            </span>
-                          ))
-                        )}
-                      </span>
-                      {team.charity && <span className="subtitle">Playing for: {team.charity}</span>}
-                      {(team.seats?.pioneer || team.seats?.modern || team.seats?.standard) && (
-                        <span className="subtitle">
-                          Pioneer: <span className="format-pioneer">{team.seats.pioneer?.displayName ?? '—'}</span> · Modern:{' '}
-                          <span className="format-modern">{team.seats.modern?.displayName ?? '—'}</span> · Standard:{' '}
-                          <span className="format-standard">{team.seats.standard?.displayName ?? '—'}</span>
-                        </span>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </>
-          )}
-
-          {activeTab === 'standings' && (
-            <>
-              <h2>Standings</h2>
-              {standings.length === 0 ? (
-                <p className="subtitle">No teams have been formed yet.</p>
-              ) : (
-                <>
-                <table className="standings-table">
-                  <thead>
-                    <tr>
-                      <th>Team</th>
-                      <th>W</th>
-                      <th>L</th>
-                      <th title="Opponents' match-win percentage">OMW%</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {standings.map((team) => (
-                      <tr key={team.captainId} className={team.eliminated ? 'standings-eliminated' : ''}>
-                        <td>
-                          {team.eliminated && <span title="Eliminated">❌ </span>}
-                          <span className={team.eliminated ? 'eliminated-name' : ''}>{teamLabel(team)}</span>
-                          {team.eliminated && <span className="tag tag-eliminated">Eliminated</span>}
-                        </td>
-                        <td>{team.wins}</td>
-                        <td>{team.losses}</td>
-                        <td>{formatOmw(team.omw)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                <p className="subtitle seat-hint standings-note">
-                  Ties are broken by OMW% — the average match-win percentage of the teams you've played (each
-                  opponent counts for at least 33.3%, byes are ignored), based on completed rounds.
+        {user?.enrolled ? (
+          <section className="panel">
+            <h2>{openRound ? `Round ${openRound.number}` : 'This Round'}</h2>
+            {!openRound ? (
+              <p className="muted">No round is in progress right now.</p>
+            ) : !myPairing ? (
+              <p className="muted">Your team isn't paired this round.</p>
+            ) : (
+              <>
+                <p className="pairing-teams">
+                  {myPairing.teamA.name}
+                  {myPairing.teamB ? ` vs ${myPairing.teamB.name}` : ''}
                 </p>
-                </>
-              )}
-            </>
-          )}
-
-          {activeTab === 'pairings' && (
-            <>
-              <h2>Pairings</h2>
-              <p className="subtitle seat-hint">See the Decklists tab for this round's decklists.</p>
-              {myCurrentMatch && (
-                <div className="my-match-card">
-                  <h3 className="round-heading">Your Matchup — Round {myCurrentMatch.round.number}</h3>
+                <p className="muted">{pairingResultLabel(myPairing)}</p>
+                {myCurrentMatch && (
                   <p className="my-match-summary">
                     <span className="matchup-format">{SEAT_LABELS[myCurrentMatch.mine.seat]}:</span>{' '}
                     <span className={`format-${myCurrentMatch.mine.seat}`}>{myCurrentMatch.mine.me.displayName}</span>
@@ -1100,173 +849,776 @@ function App() {
                     <span className={`format-${myCurrentMatch.mine.seat}`}>
                       {myCurrentMatch.mine.opp?.displayName ?? 'TBD'}
                     </span>
-                    <span className="subtitle"> ({myCurrentMatch.mine.oppTeam})</span>
                   </p>
-                  {renderMyDecks(myCurrentMatch.pairing.id, myCurrentMatch.mine)}
+                )}
+                {myPairing.teamB && !myPairing.result && renderReportButtons(myPairing)}
+                <button className="secondary-btn small-btn" onClick={() => navigate('pairings')}>
+                  View matchup &amp; decklists
+                </button>
+              </>
+            )}
+          </section>
+        ) : (
+          <section className="panel">
+            <h2>How it works</h2>
+            <ul className="how-list">
+              <li>Enroll, then a captain builds a team of three: one player per format.</li>
+              <li>Teams are paired weekly (Swiss). Each seat plays its matching format.</li>
+              <li>Report your result before the deadline, or both teams take a loss.</li>
+              <li>Three losses and a team is eliminated.</li>
+            </ul>
+            <button className="link-btn" onClick={() => navigate('rules')}>
+              Read the full rules →
+            </button>
+          </section>
+        )}
+      </div>
+
+      {standings.length > 0 && (
+        <section className="panel">
+          <div className="panel-head">
+            <h2>Standings</h2>
+            <button className="link-btn" onClick={() => navigate('standings')}>
+              Full standings →
+            </button>
+          </div>
+          {renderStandingsTable(standings.slice(0, 5), { compact: true })}
+        </section>
+      )}
+    </div>
+  )
+
+  // ---------- My Team ----------
+
+  const renderMyDecklistPanel = () => (
+    <section className="panel">
+      <h2>My Decklist</h2>
+      <p className="muted small">
+        Paste your decklist here. Edits only apply starting next round — whatever's saved when a round is generated is
+        what's shown for that round.
+      </p>
+      <textarea
+        className="text-input textarea-input"
+        value={decklistDraft}
+        maxLength={5000}
+        placeholder="Paste your decklist..."
+        onChange={(e) => setDecklistDraft(e.target.value)}
+      />
+      <button className="secondary-btn save-btn" disabled={decklistSaving} onClick={handleSaveDecklist}>
+        {decklistSaving ? 'Saving...' : 'Save Decklist'}
+      </button>
+    </section>
+  )
+
+  const renderCaptainPanel = () => (
+    <section className="panel">
+      <h2>Your Team</h2>
+      {user.team.eliminated && (
+        <p className="closed-banner">❌ Your team has been eliminated (3 losses) and will not receive future pairings.</p>
+      )}
+
+      <div className="field-group">
+        <label className="field-label" htmlFor="teamName">
+          Team Name
+        </label>
+        <input
+          id="teamName"
+          className="text-input"
+          type="text"
+          maxLength={60}
+          value={teamNameDraft}
+          onChange={(e) => setTeamNameDraft(e.target.value)}
+          placeholder={`${user.displayName}'s Team`}
+        />
+        <label className="field-label" htmlFor="charity">
+          Charity
+        </label>
+        <input
+          id="charity"
+          className="text-input"
+          type="text"
+          maxLength={80}
+          value={charityDraft}
+          onChange={(e) => setCharityDraft(e.target.value)}
+          placeholder="Charity this team is playing for"
+        />
+        <button className="secondary-btn save-btn" disabled={savingInfo} onClick={handleSaveTeamInfo}>
+          {savingInfo ? 'Saving...' : 'Save'}
+        </button>
+      </div>
+
+      <ul className="roster-list">
+        <li className="team-slot captain-slot">
+          <span className={formatClass(user.id)}>{user.displayName}</span> (Captain)
+        </li>
+        {user.team.members.map((m) => (
+          <li key={m.id} className="team-slot">
+            <span className={formatClass(m.id)}>{m.displayName}</span>
+            <button
+              className="link-btn"
+              disabled={memberBusyId === m.id || !settings.signupsOpen}
+              onClick={() => handleRemoveMember(m.id)}
+            >
+              Remove
+            </button>
+          </li>
+        ))}
+        {Array.from({ length: 2 - user.team.members.length }).map((_, i) => (
+          <li key={`empty-${i}`} className="team-slot empty-slot">
+            Open slot
+          </li>
+        ))}
+      </ul>
+
+      {user.team.members.length === 2 && (
+        <>
+          <h3 className="sub-heading">Seat Assignments</h3>
+          <p className="muted small">Drag a player onto another seat to swap them (or tap one, then tap another).</p>
+          <p className="muted small">
+            ℹ️ Swaps only affect future rounds — your team's matchups for the current round are already locked in and
+            won't change.
+          </p>
+          <div className="seat-grid">
+            {SEATS.map((seat) => {
+              const occupant = user.team.seats?.[seat] ?? null
+              const isSelected = selectedSeat === seat
+              return (
+                <div
+                  key={seat}
+                  className={`seat-card ${isSelected ? 'seat-selected' : ''}`}
+                  draggable={!busy}
+                  onDragStart={() => setDragSeat(seat)}
+                  onDragOver={(e) => e.preventDefault()}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    if (dragSeat && dragSeat !== seat) handleSwapSeats(dragSeat, seat)
+                    setDragSeat(null)
+                  }}
+                  onClick={() => {
+                    if (busy) return
+                    if (selectedSeat === null) {
+                      setSelectedSeat(seat)
+                    } else if (selectedSeat === seat) {
+                      setSelectedSeat(null)
+                    } else {
+                      handleSwapSeats(selectedSeat, seat)
+                      setSelectedSeat(null)
+                    }
+                  }}
+                >
+                  <div className="seat-label">{SEAT_LABELS[seat]}</div>
+                  <div className={`seat-occupant format-${seat}`}>{occupant?.displayName ?? '—'}</div>
                 </div>
-              )}
-              {pairings.length === 0 ? (
-                <p className="subtitle">No rounds have been played yet.</p>
-              ) : (
-                pairings.map((round) => (
-                  <div key={round.number} className="round-block">
-                    <h3 className="round-heading">
-                      Round {round.number}
-                      {round.status === 'open' && <span className="tag">Current</span>}
-                    </h3>
-                    <ul className="roster-list">
-                      {round.pairings.map((p) => {
-                        const mine =
-                          user &&
-                          user.myTeamCaptainId &&
-                          (p.teamA.captainId === user.myTeamCaptainId || p.teamB?.captainId === user.myTeamCaptainId)
-                        const canReport = mine && round.status === 'open' && p.teamB && !p.result
-                        const myMatchup = round.status === 'open' ? null : findMyMatchup(p)
-                        return (
-                          <li key={p.id} className={`pairing-row ${mine ? 'pairing-mine' : ''}`}>
-                            <div className="pairing-teams">
-                              {p.teamA.name}
-                              {p.teamB ? ` vs ${p.teamB.name}` : ''}
-                            </div>
-                            {p.matchups.length > 0 && (
-                              <ul className="matchup-list">
-                                {p.matchups.map((m) => (
-                                  <li key={m.seat} className="matchup-row">
-                                    <span className="matchup-format">{SEAT_LABELS[m.seat]}:</span>{' '}
-                                    <span className={`format-${m.seat}`}>{m.playerA?.displayName ?? 'TBD'}</span>
-                                    {' vs '}
-                                    <span className={`format-${m.seat}`}>{m.playerB?.displayName ?? 'TBD'}</span>
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-                            <div className="subtitle pairing-status">{pairingResultLabel(p)}</div>
-                            {myMatchup && (
-                              <details className="decklist-details">
-                                <summary>View your deck and {myMatchup.opp?.displayName ?? "your opponent"}'s deck</summary>
-                                {renderMyDecks(p.id, myMatchup)}
-                              </details>
-                            )}
-                            {canReport && (
-                              <div className="pairing-actions">
-                                <button
-                                  className="link-btn"
-                                  disabled={reportBusyId === p.id}
-                                  onClick={() => handleReportResult(p.id, 'win')}
-                                >
-                                  We Won
-                                </button>
-                                <button
-                                  className="link-btn"
-                                  disabled={reportBusyId === p.id}
-                                  onClick={() => handleReportResult(p.id, 'loss')}
-                                >
-                                  We Lost
-                                </button>
-                              </div>
-                            )}
-                          </li>
-                        )
-                      })}
-                    </ul>
-                  </div>
-                ))
-              )}
-            </>
-          )}
+              )
+            })}
+          </div>
+        </>
+      )}
 
-          {activeTab === 'decklists' && (
-            <>
-              <h2>Decklists</h2>
-              {decklistsData.round === null ? (
-                <p className="subtitle">No round is currently in progress.</p>
-              ) : (
-                <>
-                  <p className="subtitle seat-hint">Decklists locked in for Round {decklistsData.round}.</p>
-                  {['standard', 'modern', 'pioneer'].map((seat) => (
-                    <div key={seat} className="decklist-format-section">
-                      <h3 className={`decklist-format-heading format-${seat}`}>{SEAT_LABELS[seat]}</h3>
-                      {decklistsData.formats[seat].length === 0 ? (
-                        <p className="subtitle">No one seated here this round.</p>
-                      ) : (
-                        <ul className="roster-list">
-                          {decklistsData.formats[seat].map((entry) => (
-                            <li key={entry.playerId} className="decklist-entry">
-                              <div className="decklist-entry-header">
-                                <span className={`format-${seat}`}>{entry.playerName}</span>
-                                <span className="subtitle">
-                                  {' '}
-                                  ({entry.teamName}){entry.opponentName ? ` vs ${entry.opponentName}` : ' — Bye'}
-                                </span>
-                              </div>
-                              {entry.decklist ? (
-                                <details className="decklist-details">
-                                  <summary>
-                                    View Decklist
-                                    <button
-                                      className="link-btn copy-btn"
-                                      onClick={(e) => {
-                                        e.preventDefault()
-                                        e.stopPropagation()
-                                        handleCopyDecklist(entry.decklist, entry.playerId)
-                                      }}
-                                    >
-                                      {copiedId === entry.playerId ? 'Copied!' : 'Copy'}
-                                    </button>
-                                  </summary>
-                                  <pre className="decklist-text">{entry.decklist}</pre>
-                                </details>
-                              ) : (
-                                <span className="subtitle">No decklist submitted.</span>
-                              )}
-                            </li>
-                          ))}
-                        </ul>
-                      )}
-                    </div>
-                  ))}
-                </>
-              )}
-            </>
+      {user.team.members.length < 2 && (
+        <>
+          <h3 className="sub-heading">Add a Teammate</h3>
+          {candidates.length === 0 ? (
+            <p className="muted">No eligible players available right now.</p>
+          ) : (
+            <ul className="roster-list">
+              {candidates.map((c) => (
+                <li key={c.id} className="team-slot">
+                  {c.displayName}
+                  <button
+                    className="link-btn"
+                    disabled={memberBusyId === c.id || !settings.signupsOpen}
+                    onClick={() => handleAddMember(c.id)}
+                  >
+                    Add
+                  </button>
+                </li>
+              ))}
+            </ul>
           )}
+        </>
+      )}
+    </section>
+  )
 
-          {activeTab === 'rules' && (
-            <>
-              <h2>Rules</h2>
-              <ul className="rules-list">
-                <li>
-                  <strong>Entry Fee:</strong> Each team captain must Venmo{' '}
-                  <a className="rules-link" href="https://venmo.com/neil-estrada-2" target="_blank" rel="noreferrer">
-                    @neil-estrada-2
-                  </a>{' '}
-                  $30 for the entry fee. All entry fees will be donated to the charity of the winning team's choice.
-                </li>
-                <li>
-                  <strong>Elimination:</strong> Teams play until they accumulate 3 losses, at which point they are
-                  eliminated.
-                </li>
-                <li>
-                  <strong>Top Cut:</strong> There will be a top cut to the top N teams (likely 4 or 2) depending on
-                  team count.
-                </li>
-                <li>
-                  <strong>Platforms:</strong> The <span className="format-standard">Standard</span> and{' '}
-                  <span className="format-pioneer">Pioneer</span> seats must play all matches on Magic Arena. The{' '}
-                  <span className="format-modern">Modern</span> seat must play all matches on MTGO.
-                </li>
-                <li>
-                  <strong>No Draws:</strong> No draws, intentional or otherwise. If you fail to submit your result
-                  for the week, both teams receive a loss.
-                </li>
-                <li>
-                  <strong>Match Settings:</strong> Use the tournament settings on Magic Arena, and a 25-minute timer
-                  on Magic Online. Both sides can agree to play without a timer, only if they want to.
-                </li>
-              </ul>
-            </>
-          )}
+  const renderMemberTeamPanel = () => (
+    <section className="panel">
+      <h2>Your Team</h2>
+      {user.team.eliminated && (
+        <p className="closed-banner">❌ Your team has been eliminated (3 losses) and will not receive future pairings.</p>
+      )}
+      <p className="pairing-teams">{myTeamName}</p>
+      {user.team.charity && <p className="muted">Playing for: {user.team.charity}</p>}
+      <ul className="roster-list">
+        <li className="team-slot captain-slot">
+          <span className={formatClass(user.team.captainId)}>{user.team.captainName}</span> (Captain)
+        </li>
+        {user.team.members.map((m) => (
+          <li key={m.id} className="team-slot">
+            <span className={formatClass(m.id)}>{m.displayName}</span>
+            {m.id === user.id && <span className="tag">You</span>}
+          </li>
+        ))}
+      </ul>
+      <h3 className="sub-heading">Seat Assignments</h3>
+      <div className="seat-grid">
+        {SEATS.map((seat) => (
+          <div key={seat} className="seat-card seat-static">
+            <div className="seat-label">{SEAT_LABELS[seat]}</div>
+            <div className={`seat-occupant format-${seat}`}>{user.team.seats?.[seat]?.displayName ?? '—'}</div>
+          </div>
+        ))}
+      </div>
+      <p className="muted small">Your captain manages seats, the team name and the charity.</p>
+    </section>
+  )
+
+  const renderTeammateDecklists = () => (
+    <section className="panel">
+      <h2>Teammates' Decklists</h2>
+      <p className="muted small">
+        Edit on their behalf if they're stuck or unresponsive — this overwrites whatever they've saved.
+      </p>
+      {teammates.map((m) => (
+        <details key={m.id} className="decklist-details member-decklist-editor">
+          <summary>{m.displayName}'s Decklist</summary>
+          <textarea
+            className="text-input textarea-input"
+            value={memberDecklistDrafts[m.id] ?? ''}
+            maxLength={5000}
+            placeholder="Paste their decklist..."
+            onChange={(e) => setMemberDecklistDrafts((prev) => ({ ...prev, [m.id]: e.target.value }))}
+          />
+          <button
+            className="secondary-btn save-btn"
+            disabled={memberDecklistSaving === m.id}
+            onClick={() => handleSaveMemberDecklist(m.id)}
+          >
+            {memberDecklistSaving === m.id ? 'Saving...' : 'Save'}
+          </button>
+        </details>
+      ))}
+    </section>
+  )
+
+  const renderMyTeam = () => (
+    <>
+      <div className="page-head">
+        <h2>My Team</h2>
+      </div>
+      {!user.team && (
+        <section className="panel">
+          <h2>No team yet</h2>
+          <p className="muted">
+            {user.isCaptain
+              ? 'Setting up your team…'
+              : 'You are not on a team yet. Ask a captain to add you, or tick "I am the Team Captain" on the Home page to start your own.'}
+          </p>
+        </section>
+      )}
+      <div className="grid-2">
+        <div className="stack-col">
+          {renderMyDecklistPanel()}
+          {user.team && teammates.length > 0 && renderTeammateDecklists()}
+        </div>
+        <div className="stack-col">
+          {user.isCaptain && user.team && renderCaptainPanel()}
+          {mySeatedTeam && renderMemberTeamPanel()}
         </div>
       </div>
+    </>
+  )
+
+  // ---------- Pairings ----------
+
+  const renderPairings = () => (
+    <>
+      <div className="page-head">
+        <h2>Pairings</h2>
+        {pairings.length > 0 && (
+          <div className="pill-row">
+            {pairings.map((r) => (
+              <button
+                key={r.number}
+                className={`pill ${shownRound?.number === r.number ? 'active' : ''}`}
+                onClick={() => setSelectedRound(r.number)}
+              >
+                Round {r.number}
+                {r.status === 'open' && ' · Current'}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {myCurrentMatch && shownRound?.status === 'open' && (
+        <div className="my-match-card">
+          <h3 className="round-heading">Your Matchup — Round {myCurrentMatch.round.number}</h3>
+          <p className="my-match-summary">
+            <span className="matchup-format">{SEAT_LABELS[myCurrentMatch.mine.seat]}:</span>{' '}
+            <span className={`format-${myCurrentMatch.mine.seat}`}>{myCurrentMatch.mine.me.displayName}</span>
+            {' vs '}
+            <span className={`format-${myCurrentMatch.mine.seat}`}>{myCurrentMatch.mine.opp?.displayName ?? 'TBD'}</span>
+            <span className="muted"> ({myCurrentMatch.mine.oppTeam})</span>
+          </p>
+          {renderMyDecks(myCurrentMatch.pairing.id, myCurrentMatch.mine)}
+        </div>
+      )}
+
+      {!shownRound ? (
+        <section className="panel">
+          <p className="muted">No rounds have been played yet.</p>
+        </section>
+      ) : (
+        <ul className="roster-list card-grid">
+          {[...shownRound.pairings]
+            .sort((a, b) => Number(isMyPairing(b)) - Number(isMyPairing(a)))
+            .map((p) => {
+              const mine = isMyPairing(p)
+              const canReport = mine && shownRound.status === 'open' && p.teamB && !p.result
+              const myMatchup = shownRound.status === 'open' ? null : findMyMatchup(p)
+              return (
+                <li key={p.id} className={`pairing-row ${mine ? 'pairing-mine' : ''}`}>
+                  <div className="pairing-teams">
+                    {p.teamA.name}
+                    {p.teamB ? ` vs ${p.teamB.name}` : ''}
+                  </div>
+                  {p.matchups.length > 0 && (
+                    <ul className="matchup-list">
+                      {p.matchups.map((m) => (
+                        <li key={m.seat} className="matchup-row">
+                          <span className="matchup-format">{SEAT_LABELS[m.seat]}:</span>{' '}
+                          <span className={`format-${m.seat}`}>{m.playerA?.displayName ?? 'TBD'}</span>
+                          {' vs '}
+                          <span className={`format-${m.seat}`}>{m.playerB?.displayName ?? 'TBD'}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                  <div className="muted pairing-status">{pairingResultLabel(p)}</div>
+                  {myMatchup && (
+                    <details className="decklist-details">
+                      <summary>View your deck and {myMatchup.opp?.displayName ?? 'your opponent'}'s deck</summary>
+                      {renderMyDecks(p.id, myMatchup)}
+                    </details>
+                  )}
+                  {canReport && renderReportButtons(p)}
+                </li>
+              )
+            })}
+        </ul>
+      )}
+    </>
+  )
+
+  // ---------- Standings ----------
+
+  const renderStandings = () => (
+    <>
+      <div className="page-head">
+        <h2>Standings</h2>
+      </div>
+      {standings.length === 0 ? (
+        <section className="panel">
+          <p className="muted">No teams have been formed yet.</p>
+        </section>
+      ) : (
+        <section className="panel">
+          {renderStandingsTable(standings)}
+          <p className="muted small standings-note">
+            Ties are broken by OMW% — the average match-win percentage of the teams you've played (each opponent counts
+            for at least 33.3%, byes are ignored), based on completed rounds.
+          </p>
+        </section>
+      )}
+    </>
+  )
+
+  // ---------- Teams ----------
+
+  const renderTeams = () => (
+    <>
+      <div className="page-head">
+        <h2>Teams</h2>
+        <span className="muted">{teams.length} teams</span>
+      </div>
+      {teams.length === 0 ? (
+        <section className="panel">
+          <p className="muted">No teams have been formed yet.</p>
+        </section>
+      ) : (
+        <ul className="roster-list card-grid">
+          {teams.map((team) => (
+            <li
+              key={team.captainId}
+              className={`team-row ${user?.myTeamCaptainId === team.captainId ? 'team-mine' : ''}`}
+            >
+              <strong>
+                {teamLabel(team)}
+                {team.eliminated && <span className="tag tag-eliminated">Eliminated</span>}
+                {user?.isAdmin && (
+                  <button
+                    className="link-btn paid-toggle"
+                    disabled={paidBusyId === team.captainId}
+                    title={team.paid ? 'Paid — click to unmark' : 'Not paid — click to mark as paid'}
+                    onClick={() => handleTogglePaid(team.captainId, team.paid)}
+                  >
+                    {team.paid ? '💰' : '⬜'}
+                  </button>
+                )}
+              </strong>
+              <span className="muted small">
+                Record {team.wins}–{team.losses}
+              </span>
+              <span className="muted">
+                Captain: <span className={formatClass(team.captainId)}>{team.captainName}</span>
+              </span>
+              <span className="muted">
+                {team.members.length === 0
+                  ? 'no teammates yet'
+                  : team.members.map((m, idx) => (
+                      <span key={m.id}>
+                        <span className={formatClass(m.id)}>{m.displayName}</span>
+                        {idx < team.members.length - 1 ? ', ' : ''}
+                      </span>
+                    ))}
+              </span>
+              {team.charity && <span className="muted">Playing for: {team.charity}</span>}
+              {(team.seats?.pioneer || team.seats?.modern || team.seats?.standard) && (
+                <span className="muted">
+                  Pioneer: <span className="format-pioneer">{team.seats.pioneer?.displayName ?? '—'}</span> · Modern:{' '}
+                  <span className="format-modern">{team.seats.modern?.displayName ?? '—'}</span> · Standard:{' '}
+                  <span className="format-standard">{team.seats.standard?.displayName ?? '—'}</span>
+                </span>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
+  )
+
+  // ---------- Decklists ----------
+
+  const decklistQuery = decklistFilter.trim().toLowerCase()
+  const decklistEntries = (decklistsData.formats[decklistFormat] ?? []).filter(
+    (entry) =>
+      !decklistQuery ||
+      [entry.playerName, entry.teamName, entry.opponentName].some((v) => (v ?? '').toLowerCase().includes(decklistQuery))
+  )
+
+  const renderDecklists = () => (
+    <>
+      <div className="page-head">
+        <h2>Decklists</h2>
+        {decklistsData.round !== null && (
+          <div className="pill-row">
+            {['standard', 'modern', 'pioneer'].map((seat) => (
+              <button
+                key={seat}
+                className={`pill pill-${seat} ${decklistFormat === seat ? 'active' : ''}`}
+                onClick={() => setDecklistFormat(seat)}
+              >
+                {SEAT_LABELS[seat]} ({decklistsData.formats[seat].length})
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+      {decklistsData.round === null ? (
+        <section className="panel">
+          <p className="muted">No round is currently in progress.</p>
+        </section>
+      ) : (
+        <section className="panel">
+          <div className="filter-row">
+            <span className="muted small">Decklists locked in for Round {decklistsData.round}.</span>
+            <input
+              className="text-input filter-input"
+              type="search"
+              placeholder="Search player or team…"
+              value={decklistFilter}
+              onChange={(e) => setDecklistFilter(e.target.value)}
+            />
+          </div>
+          {decklistEntries.length === 0 ? (
+            <p className="muted">{decklistQuery ? 'No matches.' : 'No one seated here this round.'}</p>
+          ) : (
+            <ul className="roster-list card-grid decklist-grid">
+              {decklistEntries.map((entry) => (
+                <li key={entry.playerId} className="decklist-entry">
+                  <div className="decklist-entry-header">
+                    <span className={`format-${decklistFormat}`}>{entry.playerName}</span>
+                    <span className="muted">
+                      {' '}
+                      ({entry.teamName}){entry.opponentName ? ` vs ${entry.opponentName}` : ' — Bye'}
+                    </span>
+                  </div>
+                  {entry.decklist ? (
+                    <details className="decklist-details">
+                      <summary>
+                        View Decklist
+                        <button
+                          className="link-btn copy-btn"
+                          onClick={(e) => {
+                            e.preventDefault()
+                            e.stopPropagation()
+                            handleCopyDecklist(entry.decklist, entry.playerId)
+                          }}
+                        >
+                          {copiedId === entry.playerId ? 'Copied!' : 'Copy'}
+                        </button>
+                      </summary>
+                      <pre className="decklist-text">{entry.decklist}</pre>
+                    </details>
+                  ) : (
+                    <span className="muted">No decklist submitted.</span>
+                  )}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
+      )}
+    </>
+  )
+
+  // ---------- Roster ----------
+
+  const renderRoster = () => (
+    <>
+      <div className="page-head">
+        <h2>League Roster</h2>
+        <span className="muted">{league.length} enrolled</span>
+      </div>
+      {league.length === 0 ? (
+        <section className="panel">
+          <p className="muted">No one has enrolled yet.</p>
+        </section>
+      ) : (
+        <ul className="roster-list card-grid roster-grid">
+          {league.map((member) => (
+            <li key={member.id}>
+              {member.isAdmin && <span title="Admin">👑 </span>}
+              {member.isCaptain && <span title="Captain">🧑‍✈️ </span>}
+              <span className={formatClass(member.id)}>{member.displayName}</span>
+              {member.isCaptain && <span className="tag">Captain</span>}
+              {!member.isCaptain && member.onTeam && <span className="tag">On a team</span>}
+              {user?.isAdmin &&
+                (member.hasDecklist ? (
+                  <span title="Decklist submitted" className="decklist-status decklist-status-yes">
+                    ✅
+                  </span>
+                ) : (
+                  <span title="No decklist yet" className="decklist-status decklist-status-no">
+                    ⬜
+                  </span>
+                ))}
+            </li>
+          ))}
+        </ul>
+      )}
+    </>
+  )
+
+  // ---------- Rules ----------
+
+  const renderRules = () => (
+    <>
+      <div className="page-head">
+        <h2>Rules</h2>
+      </div>
+      <ul className="rules-list">
+        <li>
+          <strong>Entry Fee:</strong> Each team captain must Venmo{' '}
+          <a className="rules-link" href="https://venmo.com/neil-estrada-2" target="_blank" rel="noreferrer">
+            @neil-estrada-2
+          </a>{' '}
+          $30 for the entry fee. All entry fees will be donated to the charity of the winning team's choice.
+        </li>
+        <li>
+          <strong>Elimination:</strong> Teams play until they accumulate 3 losses, at which point they are eliminated.
+        </li>
+        <li>
+          <strong>Top Cut:</strong> There will be a top cut to the top N teams (likely 4 or 2) depending on team count.
+        </li>
+        <li>
+          <strong>Platforms:</strong> The <span className="format-standard">Standard</span> and{' '}
+          <span className="format-pioneer">Pioneer</span> seats must play all matches on Magic Arena. The{' '}
+          <span className="format-modern">Modern</span> seat must play all matches on MTGO.
+        </li>
+        <li>
+          <strong>No Draws:</strong> No draws, intentional or otherwise. If you fail to submit your result for the week,
+          both teams receive a loss.
+        </li>
+        <li>
+          <strong>Match Settings:</strong> Use the tournament settings on Magic Arena, and a 25-minute timer on Magic
+          Online. Both sides can agree to play without a timer, only if they want to.
+        </li>
+      </ul>
+    </>
+  )
+
+  // ---------- Admin ----------
+
+  const renderAdmin = () => (
+    <>
+      <div className="page-head">
+        <h2>Admin</h2>
+      </div>
+      <div className="stat-row">
+        <div className="stat">
+          <div className="stat-value">{league.length}</div>
+          <div className="stat-label">Players enrolled</div>
+        </div>
+        <div className="stat">
+          <div className="stat-value">
+            {teams.filter((t) => t.members.length === 2).length}/{teams.length}
+          </div>
+          <div className="stat-label">Teams full</div>
+        </div>
+        <div className="stat">
+          <div className="stat-value">
+            {teams.filter((t) => t.paid).length}/{teams.length}
+          </div>
+          <div className="stat-label">Teams paid</div>
+        </div>
+        <div className="stat">
+          <div className="stat-value">
+            {league.filter((m) => m.hasDecklist).length}/{league.length}
+          </div>
+          <div className="stat-label">Decklists in</div>
+        </div>
+      </div>
+
+      <div className="grid-2">
+        <section className="panel">
+          <h2>Round control</h2>
+          <div className="admin-actions">
+            <button className="secondary-btn" disabled={settingsBusy} onClick={handleToggleSignups}>
+              {settings.signupsOpen ? 'Close Signups' : 'Open Signups'}
+            </button>
+            <button className="secondary-btn" disabled={roundBusy} onClick={handleAdvanceRound}>
+              {advanceRoundLabel}
+            </button>
+          </div>
+          <p className="muted small">
+            Rounds also advance automatically at the scheduled time. Closing signups removes enrolled players who
+            aren't on a team.
+          </p>
+        </section>
+
+        <section className="panel">
+          <h2>Discord reminders</h2>
+          <div className="admin-actions">
+            <button
+              className="secondary-btn"
+              disabled={reminderSending || !settings.discordBotConfigured}
+              onClick={handleSendDecklistReminder}
+            >
+              Send Decklist Reminder
+            </button>
+            <button
+              className="secondary-btn"
+              disabled={resultReminderSending || !settings.discordBotConfigured}
+              onClick={handleSendResultReminder}
+            >
+              Send Result Reminder
+            </button>
+          </div>
+          <p className="muted small">
+            {settings.autoRemindersActive
+              ? 'Automatic result reminders go out 48, 24, 12, 6 and 3 hours before the deadline.'
+              : 'Automatic result reminders are off in this environment.'}
+          </p>
+        </section>
+
+        <section className="panel">
+          <h2>Testing</h2>
+          <div className="admin-actions">
+            <button className="secondary-btn" disabled={dummyBusy} onClick={handleToggleDummyAccounts}>
+              {settings.dummyAccountsEnabled ? 'Remove Test Accounts' : 'Add Test Accounts'}
+            </button>
+          </div>
+        </section>
+
+        <section className="panel danger-zone">
+          <h2>Danger zone</h2>
+          <div className="admin-actions">
+            <button className="secondary-btn danger-btn" disabled={resetBusy} onClick={handleResetSeason}>
+              Reset All Standings
+            </button>
+          </div>
+          <p className="muted small">Clears every round, pairing and win/loss record. This can't be undone.</p>
+        </section>
+      </div>
+    </>
+  )
+
+  const pages = {
+    home: renderHome,
+    myteam: renderMyTeam,
+    pairings: renderPairings,
+    standings: renderStandings,
+    teams: renderTeams,
+    decklists: renderDecklists,
+    roster: renderRoster,
+    rules: renderRules,
+    admin: renderAdmin,
+  }
+
+  return (
+    <div className="app">
+      <header className="topbar">
+        <div className="topbar-inner">
+          <a className="brand" href="#home" onClick={() => setActiveTab('home')}>
+            <img src="/logo.png" alt="" />
+            <span>Orchid League</span>
+          </a>
+          <div className="topbar-spacer" />
+          {nextRoundAtMs && (
+            <span className="topbar-countdown" title={nextRoundAtLabel}>
+              ⏳ {countdownMs === 0 ? 'Any moment' : countdownLabel}
+            </span>
+          )}
+          {!loading &&
+            (user ? (
+              <div className="topbar-user">
+                <span className="topbar-name">{user.displayName}</span>
+                <button className="secondary-btn small-btn" onClick={handleLogout}>
+                  Log out
+                </button>
+              </div>
+            ) : (
+              <a className="discord-btn small" href={`${SERVER_URL}/auth/discord`}>
+                Login with Discord
+              </a>
+            ))}
+        </div>
+        <nav className="nav" aria-label="Sections">
+          {navTabs.map((t) => (
+            <button
+              key={t.id}
+              className={`nav-btn ${page === t.id ? 'active' : ''}`}
+              onClick={() => navigate(t.id)}
+            >
+              {t.label}
+            </button>
+          ))}
+        </nav>
+      </header>
+
+      <main className="page">
+        {error && (
+          <div className="toast-error" role="alert">
+            <span>{error}</span>
+            <button className="toast-close" aria-label="Dismiss" onClick={() => setError('')}>
+              ×
+            </button>
+          </div>
+        )}
+        {loading ? <p className="muted">Loading...</p> : pages[page]()}
+      </main>
     </div>
   )
 }
