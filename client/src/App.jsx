@@ -548,8 +548,10 @@ function App() {
   const standings = [...teams].sort((a, b) => {
     if (b.wins !== a.wins) return b.wins - a.wins
     if (a.losses !== b.losses) return a.losses - b.losses
+    if ((b.omw ?? -1) !== (a.omw ?? -1)) return (b.omw ?? -1) - (a.omw ?? -1)
     return a.captainName.localeCompare(b.captainName)
   })
+  const formatOmw = (omw) => (omw === null || omw === undefined ? '—' : `${(omw * 100).toFixed(1)}%`)
 
   const teamLabel = (team) => team.teamName || `${team.captainName}'s Team`
 
@@ -591,6 +593,52 @@ function App() {
     : currentRound.status === 'open'
       ? `Close Round ${currentRound.number} & Start Round ${currentRound.number + 1}`
       : `Start Round ${currentRound.number + 1}`
+
+  // The signed-in user's own seat in a pairing and who they're facing --
+  // only their own opponent, never other players on either team.
+  const findMyMatchup = (p) => {
+    if (!user || !p.teamB) return null
+    for (const m of p.matchups) {
+      if (m.playerA?.id === user.id) return { seat: m.seat, me: m.playerA, opp: m.playerB, oppTeam: p.teamB.name }
+      if (m.playerB?.id === user.id) return { seat: m.seat, me: m.playerB, opp: m.playerA, oppTeam: p.teamA.name }
+    }
+    return null
+  }
+
+  const myCurrentMatch = (() => {
+    const round = pairings.find((r) => r.status === 'open')
+    if (!round) return null
+    for (const p of round.pairings) {
+      const mine = findMyMatchup(p)
+      if (mine) return { round, pairing: p, mine }
+    }
+    return null
+  })()
+
+  const renderDeckPanel = (title, player, copyKey) => (
+    <div className="deck-panel">
+      <div className="deck-panel-header">
+        <strong>{title}</strong>
+        {player?.decklist && (
+          <button className="link-btn copy-btn" onClick={() => handleCopyDecklist(player.decklist, copyKey)}>
+            {copiedId === copyKey ? 'Copied!' : 'Copy'}
+          </button>
+        )}
+      </div>
+      {player?.decklist ? (
+        <pre className="decklist-text deck-panel-text">{player.decklist}</pre>
+      ) : (
+        <span className="subtitle">{player ? 'No decklist submitted.' : 'No opponent seated.'}</span>
+      )}
+    </div>
+  )
+
+  const renderMyDecks = (pairingId, mine) => (
+    <div className="deck-grid">
+      {renderDeckPanel(`Your deck (${mine.me.displayName})`, mine.me, `${pairingId}-me`)}
+      {renderDeckPanel(`${mine.opp?.displayName ?? 'Opponent'}'s deck`, mine.opp, `${pairingId}-opp`)}
+    </div>
+  )
 
   const pairingResultLabel = (p) => {
     if (!p.teamB) return `${p.teamA.name} — Bye`
@@ -1004,12 +1052,14 @@ function App() {
               {standings.length === 0 ? (
                 <p className="subtitle">No teams have been formed yet.</p>
               ) : (
+                <>
                 <table className="standings-table">
                   <thead>
                     <tr>
                       <th>Team</th>
                       <th>W</th>
                       <th>L</th>
+                      <th title="Opponents' match-win percentage">OMW%</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1022,10 +1072,16 @@ function App() {
                         </td>
                         <td>{team.wins}</td>
                         <td>{team.losses}</td>
+                        <td>{formatOmw(team.omw)}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
+                <p className="subtitle seat-hint standings-note">
+                  Ties are broken by OMW% — the average match-win percentage of the teams you've played (each
+                  opponent counts for at least 33.3%, byes are ignored), based on completed rounds.
+                </p>
+                </>
               )}
             </>
           )}
@@ -1034,6 +1090,21 @@ function App() {
             <>
               <h2>Pairings</h2>
               <p className="subtitle seat-hint">See the Decklists tab for this round's decklists.</p>
+              {myCurrentMatch && (
+                <div className="my-match-card">
+                  <h3 className="round-heading">Your Matchup — Round {myCurrentMatch.round.number}</h3>
+                  <p className="my-match-summary">
+                    <span className="matchup-format">{SEAT_LABELS[myCurrentMatch.mine.seat]}:</span>{' '}
+                    <span className={`format-${myCurrentMatch.mine.seat}`}>{myCurrentMatch.mine.me.displayName}</span>
+                    {' vs '}
+                    <span className={`format-${myCurrentMatch.mine.seat}`}>
+                      {myCurrentMatch.mine.opp?.displayName ?? 'TBD'}
+                    </span>
+                    <span className="subtitle"> ({myCurrentMatch.mine.oppTeam})</span>
+                  </p>
+                  {renderMyDecks(myCurrentMatch.pairing.id, myCurrentMatch.mine)}
+                </div>
+              )}
               {pairings.length === 0 ? (
                 <p className="subtitle">No rounds have been played yet.</p>
               ) : (
@@ -1050,6 +1121,7 @@ function App() {
                           user.myTeamCaptainId &&
                           (p.teamA.captainId === user.myTeamCaptainId || p.teamB?.captainId === user.myTeamCaptainId)
                         const canReport = mine && round.status === 'open' && p.teamB && !p.result
+                        const myMatchup = round.status === 'open' ? null : findMyMatchup(p)
                         return (
                           <li key={p.id} className={`pairing-row ${mine ? 'pairing-mine' : ''}`}>
                             <div className="pairing-teams">
@@ -1069,6 +1141,12 @@ function App() {
                               </ul>
                             )}
                             <div className="subtitle pairing-status">{pairingResultLabel(p)}</div>
+                            {myMatchup && (
+                              <details className="decklist-details">
+                                <summary>View your deck and {myMatchup.opp?.displayName ?? "your opponent"}'s deck</summary>
+                                {renderMyDecks(p.id, myMatchup)}
+                              </details>
+                            )}
                             {canReport && (
                               <div className="pairing-actions">
                                 <button

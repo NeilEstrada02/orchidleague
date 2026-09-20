@@ -79,6 +79,53 @@ export async function getRounds() {
   return loadRounds();
 }
 
+// Standard Magic floor: an opponent never counts for less than 33% when
+// averaging opponents' match-win percentages.
+const MIN_MATCH_WIN_PCT = 1 / 3;
+
+// Opponents' match-win percentage (OMW%) per team, from closed rounds only
+// (same point at which W/L records are applied). Byes are ignored both as an
+// opponent and in a team's own match-win percentage, per the Magic tournament
+// rules. Returns Map<captainId, { omw }>; teams with no opponents yet are absent.
+export function computeTiebreakers(rounds) {
+  const records = new Map();
+  const opponents = new Map();
+  const record = (id) => {
+    if (!records.has(id)) records.set(id, { wins: 0, matches: 0 });
+    return records.get(id);
+  };
+
+  for (const round of rounds) {
+    if (round.status !== 'closed') continue;
+    for (const p of round.pairings) {
+      if (!p.teamB) continue;
+      const a = record(p.teamA);
+      const b = record(p.teamB);
+      a.matches++;
+      b.matches++;
+      if (p.result === 'A') a.wins++;
+      else if (p.result === 'B') b.wins++;
+      if (!opponents.has(p.teamA)) opponents.set(p.teamA, []);
+      if (!opponents.has(p.teamB)) opponents.set(p.teamB, []);
+      opponents.get(p.teamA).push(p.teamB);
+      opponents.get(p.teamB).push(p.teamA);
+    }
+  }
+
+  const matchWinPct = (id) => {
+    const r = records.get(id);
+    if (!r || r.matches === 0) return MIN_MATCH_WIN_PCT;
+    return Math.max(MIN_MATCH_WIN_PCT, r.wins / r.matches);
+  };
+
+  const result = new Map();
+  for (const [id, opps] of opponents) {
+    const omw = opps.reduce((sum, oppId) => sum + matchWinPct(oppId), 0) / opps.length;
+    result.set(id, { omw });
+  }
+  return result;
+}
+
 export async function resetRounds() {
   await saveRounds([]);
 }

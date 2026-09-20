@@ -38,6 +38,7 @@ import {
   reportResult,
   resetRounds,
   backfillCurrentRoundSeats,
+  computeTiebreakers,
 } from './pairingStore.js';
 import { getRoundStartTime } from './schedule.js';
 import {
@@ -773,9 +774,11 @@ app.get('/api/teams', async (req, res) => {
     requesterIsAdmin = requester?.isAdmin ?? false;
   }
 
+  const tiebreakers = computeTiebreakers(await getRounds());
+
   const resolved = await Promise.all(
     allTeams.map(async (t) => {
-      const r = await resolveTeam(t);
+      const r = { ...(await resolveTeam(t)), omw: tiebreakers.get(t.captainId)?.omw ?? null };
       return requesterIsAdmin ? { ...r, paid: t.paid ?? false } : r;
     })
   );
