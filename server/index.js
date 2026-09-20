@@ -41,6 +41,7 @@ import {
   computeTiebreakers,
 } from './pairingStore.js';
 import { getRoundStartTime } from './schedule.js';
+import { pickDueReminder, claimReminder, releaseReminder } from './reminderScheduler.js';
 import {
   addRoleToMember,
   removeRoleFromMember,
@@ -72,6 +73,7 @@ if (!DISCORD_CLIENT_ID || !DISCORD_CLIENT_SECRET || !DISCORD_REDIRECT_URI || !SE
 const isProduction = NODE_ENV === 'production';
 const ELIMINATION_LOSSES = 3;
 const REMINDER_CHANNEL_ID = '1375356544417271900'; // #league-announcements
+const autoRemindersActive = isProduction || process.env.RENDER === 'true';
 
 const app = express();
 app.set('trust proxy', 1);
@@ -129,6 +131,61 @@ app.use((req, res, next) => {
   maybeAutoAdvance().catch((err) => console.error('Auto-advance check failed:', err));
   next();
 });
+
+// Every match in the round with no reported result yet, with both full
+// teams' Discord IDs so anyone involved gets pinged.
+async function getUnreportedMatches(round) {
+  const unreported = round.pairings.filter((p) => p.teamB && !p.result);
+  const matches = await Promise.all(
+    unreported.map(async (p) => {
+      const [teamA, teamB, captainA, captainB] = await Promise.all([
+        getTeam(p.teamA),
+        getTeam(p.teamB),
+        getUser(p.teamA),
+        getUser(p.teamB),
+      ]);
+      const teamAName = teamA?.teamName || `${captainA?.displayName ?? 'Unknown'}'s Team`;
+      const teamBName = teamB?.teamName || `${captainB?.displayName ?? 'Unknown'}'s Team`;
+      const mentionIds = [p.teamA, ...(teamA?.memberIds ?? []), p.teamB, ...(teamB?.memberIds ?? [])];
+      return { teamAName, teamBName, mentionIds };
+    })
+  );
+  const teamCount = new Set(unreported.flatMap((p) => [p.teamA, p.teamB])).size;
+  return { matches, teamCount };
+}
+
+// Automatic result reminders at 48/24/12/6/3 hours before the round's
+// deadline (the moment the next round starts). Runs on a timer, and each
+// reminder is claimed atomically in Redis first, so a restart or overlapping
+// deploy can never send one twice.
+let reminderCheckInProgress = false;
+async function checkResultReminders() {
+  if (reminderCheckInProgress || !isDiscordBotConfigured()) return;
+  reminderCheckInProgress = true;
+  try {
+    const round = await getCurrentRound();
+    if (!round) return;
+    const deadline = getRoundStartTime(round.number + 1);
+    const hours = pickDueReminder(deadline.getTime() - Date.now());
+    if (hours === null) return;
+
+    const { matches } = await getUnreportedMatches(round);
+    if (matches.length === 0) return;
+    if (!(await claimReminder(round.number, hours))) return;
+
+    const result = await sendResultReminder(REMINDER_CHANNEL_ID, matches, CLIENT_URL, deadline, `${hours} hours`);
+    if (result.ok) {
+      console.log(`Sent ${hours}h result reminder for round ${round.number} (${matches.length} matches).`);
+    } else {
+      console.error(`Failed to send ${hours}h result reminder for round ${round.number}:`, result.error);
+      // Nothing went out, so let the next tick retry (bounded by the grace
+      // window). If some chunks did go out, keep the claim rather than duplicate them.
+      if (!result.messageCount) await releaseReminder(round.number, hours);
+    }
+  } finally {
+    reminderCheckInProgress = false;
+  }
+}
 
 async function resolveTeam(team) {
   if (!team) return null;
@@ -325,7 +382,9 @@ app.get('/api/settings', async (req, res) => {
   const settings = await getSettings();
   const rounds = await getRounds();
   const nextRoundAt = getRoundStartTime(rounds.length + 1).toISOString();
-  res.json({ settings: { ...settings, nextRoundAt, discordBotConfigured: isDiscordBotConfigured() } });
+  res.json({
+    settings: { ...settings, nextRoundAt, discordBotConfigured: isDiscordBotConfigured(), autoRemindersActive },
+  });
 });
 
 app.post('/api/settings', async (req, res) => {
@@ -652,33 +711,17 @@ app.post('/api/admin/send-result-reminder', async (req, res) => {
     return res.json({ sent: false, matchCount: 0 });
   }
 
-  const unreported = round.pairings.filter((p) => p.teamB && !p.result);
-  if (unreported.length === 0) {
+  const { matches, teamCount } = await getUnreportedMatches(round);
+  if (matches.length === 0) {
     return res.json({ sent: false, matchCount: 0 });
   }
-
-  const matches = await Promise.all(
-    unreported.map(async (p) => {
-      const [teamA, teamB, captainA, captainB] = await Promise.all([
-        getTeam(p.teamA),
-        getTeam(p.teamB),
-        getUser(p.teamA),
-        getUser(p.teamB),
-      ]);
-      const teamAName = teamA?.teamName || `${captainA?.displayName ?? 'Unknown'}'s Team`;
-      const teamBName = teamB?.teamName || `${captainB?.displayName ?? 'Unknown'}'s Team`;
-      const mentionIds = [p.teamA, ...(teamA?.memberIds ?? []), p.teamB, ...(teamB?.memberIds ?? [])];
-      return { teamAName, teamBName, mentionIds };
-    })
-  );
 
   const nextRoundAt = getRoundStartTime(round.number + 1);
   const result = await sendResultReminder(REMINDER_CHANNEL_ID, matches, CLIENT_URL, nextRoundAt);
   if (!result.ok) {
     return res.status(502).json({ error: 'send_failed' });
   }
-  const teamCount = new Set(unreported.flatMap((p) => [p.teamA, p.teamB])).size;
-  res.json({ sent: true, matchCount: unreported.length, teamCount });
+  res.json({ sent: true, matchCount: matches.length, teamCount });
 });
 
 app.post('/api/pairings/advance', async (req, res) => {
@@ -794,6 +837,14 @@ if (fs.existsSync(path.join(clientDist, 'index.html'))) {
   app.get(/^(?!\/api|\/auth).*/, (req, res) => {
     res.sendFile(path.join(clientDist, 'index.html'));
   });
+}
+
+// Only the deployed site sends automatic reminders -- a local dev server
+// shares the production Redis and Discord bot, and must never ping people.
+if (autoRemindersActive) {
+  setInterval(() => {
+    checkResultReminders().catch((err) => console.error('Result reminder check failed:', err));
+  }, 60 * 1000);
 }
 
 app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
