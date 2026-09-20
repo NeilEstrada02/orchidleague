@@ -693,6 +693,12 @@
   margin: 1rem 0 0;
 }
 
+.standings-players {
+  margin-top: 0.15rem;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
 /* ---------- Seats ---------- */
 
 .seat-grid {

@@ -707,6 +707,21 @@ function App() {
     </div>
   )
 
+  // A team's players, each in their format's color. Uses the seat assignments
+  // when the team is full, otherwise just the captain and whoever has joined.
+  const renderTeamPlayers = (team) => {
+    const seated = SEATS.filter((s) => team.seats?.[s]).map((s) => team.seats[s])
+    const players = seated.length
+      ? seated
+      : [{ id: team.captainId, displayName: team.captainName }, ...team.members]
+    return players.map((p, i) => (
+      <span key={p.id}>
+        <span className={formatClass(p.id)}>{p.displayName}</span>
+        {i < players.length - 1 ? ' · ' : ''}
+      </span>
+    ))
+  }
+
   const renderStandingsTable = (rows) => (
     <table className="standings-table">
       <thead>
@@ -733,6 +748,7 @@ function App() {
                 {team.eliminated && <span title="Eliminated">❌ </span>}
                 <span className={team.eliminated ? 'eliminated-name' : ''}>{teamLabel(team)}</span>
                 {team.eliminated && <span className="tag tag-eliminated">Eliminated</span>}
+                <div className="standings-players">{renderTeamPlayers(team)}</div>
               </td>
               <td>{team.wins}</td>
               <td>{team.losses}</td>
