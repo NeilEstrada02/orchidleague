@@ -47,6 +47,8 @@ import {
   removeRoleFromMember,
   sendDecklistReminder,
   sendResultReminder,
+  sendNewRoundAnnouncement,
+  ensureLeagueRole,
   isDiscordBotConfigured,
 } from './discordBot.js';
 
@@ -94,12 +96,11 @@ app.use(
   })
 );
 
-// Advances rounds automatically on schedule. Since Render's free tier can
-// sleep the whole process between visits, this can't rely on an in-process
-// timer alone -- instead every incoming request triggers this check (fired
-// in the background, never blocking the response), so the first visit after
-// a scheduled boundary catches it up. The in-process lock just prevents a
-// burst of concurrent requests from double-advancing.
+// Advances rounds automatically on schedule. It runs on the production timer
+// (every minute) and also on every incoming request (fired in the background,
+// never blocking the response) as a fallback, so a scheduled boundary is
+// caught up even if the process was restarted. The in-process lock just
+// prevents concurrent triggers from double-advancing.
 let autoAdvanceInProgress = false;
 async function maybeAutoAdvance() {
   if (autoAdvanceInProgress) return;
@@ -152,6 +153,44 @@ async function getUnreportedMatches(round) {
   );
   const teamCount = new Set(unreported.flatMap((p) => [p.teamA, p.teamB])).size;
   return { matches, teamCount };
+}
+
+// Pings the league role once when a round is generated on its schedule.
+// Only a round created at/after its own scheduled start (i.e. by the
+// automatic advance) and still fresh qualifies, so an admin starting a round
+// early by hand never pings everyone. Claimed atomically in Redis so it can
+// never go out twice; if the send fails it's released and retried next tick.
+let announceInProgress = false;
+async function checkNewRoundAnnouncement() {
+  if (announceInProgress || !isDiscordBotConfigured()) return;
+  announceInProgress = true;
+  try {
+    const round = await getCurrentRound();
+    if (!round?.createdAt) return;
+    const createdMs = new Date(round.createdAt).getTime();
+    const scheduledMs = getRoundStartTime(round.number).getTime();
+    if (createdMs < scheduledMs || Date.now() - createdMs > 30 * 60 * 1000) return;
+    if (!(await claimReminder(round.number, 'announce'))) return;
+
+    const roleId = await ensureLeagueRole();
+    const result = roleId
+      ? await sendNewRoundAnnouncement(
+          REMINDER_CHANNEL_ID,
+          roleId,
+          round.number,
+          CLIENT_URL,
+          getRoundStartTime(round.number + 1)
+        )
+      : { ok: false, error: 'no_role' };
+    if (result.ok) {
+      console.log(`Announced round ${round.number} to the league role.`);
+    } else {
+      console.error(`Failed to announce round ${round.number}:`, result.error);
+      await releaseReminder(round.number, 'announce');
+    }
+  } finally {
+    announceInProgress = false;
+  }
 }
 
 // Automatic result reminders at 48/24/12/6/3 hours before the round's
@@ -842,8 +881,12 @@ if (fs.existsSync(path.join(clientDist, 'index.html'))) {
 // Only the deployed site sends automatic reminders -- a local dev server
 // shares the production Redis and Discord bot, and must never ping people.
 if (autoRemindersActive) {
-  setInterval(() => {
-    checkResultReminders().catch((err) => console.error('Result reminder check failed:', err));
+  // The site is always on now, so advance rounds from the timer too (not just
+  // on visits) and announce the new round right after it's generated.
+  setInterval(async () => {
+    await maybeAutoAdvance().catch((err) => console.error('Auto-advance check failed:', err));
+    await checkNewRoundAnnouncement().catch((err) => console.error('Round announcement failed:', err));
+    await checkResultReminders().catch((err) => console.error('Result reminder check failed:', err));
   }, 60 * 1000);
 }
 

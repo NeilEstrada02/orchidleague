@@ -125,7 +125,7 @@ export async function syncAllRoles(enrolledUsers) {
 // Leaves headroom under Discord's 2000-character message cap.
 const MAX_CONTENT_LENGTH = 1800;
 
-export async function sendChannelMessage(channelId, content, mentionUserIds = []) {
+export async function sendChannelMessage(channelId, content, mentionUserIds = [], mentionRoleIds = []) {
   if (!botConfigured()) return { ok: false, error: 'not_configured' };
   try {
     const res = await discordFetch(`${DISCORD_API}/channels/${channelId}/messages`, {
@@ -133,7 +133,7 @@ export async function sendChannelMessage(channelId, content, mentionUserIds = []
       headers: botHeaders(),
       body: JSON.stringify({
         content,
-        allowed_mentions: { parse: [], users: mentionUserIds },
+        allowed_mentions: { parse: [], users: mentionUserIds, roles: mentionRoleIds },
       }),
     });
     if (!res.ok) {
@@ -216,6 +216,13 @@ export async function sendResultReminder(channelId, matches, siteUrl, nextRoundA
     await sleep(400);
   }
   return { ok: true, messageCount: chunks.length };
+}
+
+// Pings the whole league role to say a new round's pairings are up.
+export async function sendNewRoundAnnouncement(channelId, roleId, roundNumber, siteUrl, deadline) {
+  const unixSeconds = Math.floor(new Date(deadline).getTime() / 1000);
+  const content = `<@&${roleId}> 🌸 **Round ${roundNumber} is live!** Pairings and decklists are up at ${siteUrl}. Report your result by <t:${unixSeconds}:F> (<t:${unixSeconds}:R>) — a match with no report counts as a loss for both teams.`;
+  return sendChannelMessage(channelId, content, [], [roleId]);
 }
 
 export function isDiscordBotConfigured() {

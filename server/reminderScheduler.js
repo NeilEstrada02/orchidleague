@@ -23,13 +23,14 @@ const keyFor = (roundNumber) => `orchid:reminders:round:${roundNumber}`;
 // Atomically records that this reminder is being handled. SADD returns 1 only
 // for the first caller, so overlapping processes (a deploy overlap, a stray
 // second instance) can't both send it.
-export async function claimReminder(roundNumber, hours) {
+// `kind` is the reminder's hours threshold, or 'announce' for the new-round ping.
+export async function claimReminder(roundNumber, kind) {
   const key = keyFor(roundNumber);
-  const added = await redisClient.sAdd(key, String(hours));
+  const added = await redisClient.sAdd(key, String(kind));
   await redisClient.expire(key, 60 * 60 * 24 * 30);
   return added === 1;
 }
 
-export async function releaseReminder(roundNumber, hours) {
-  await redisClient.sRem(keyFor(roundNumber), String(hours));
+export async function releaseReminder(roundNumber, kind) {
+  await redisClient.sRem(keyFor(roundNumber), String(kind));
 }
