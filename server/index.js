@@ -39,6 +39,7 @@ import {
   resetRounds,
   backfillCurrentRoundSeats,
   computeTiebreakers,
+  computeProvisionalRecords,
 } from './pairingStore.js';
 import { getRoundStartTime } from './schedule.js';
 import { pickDueReminder, claimReminder, releaseReminder } from './reminderScheduler.js';
@@ -856,11 +857,25 @@ app.get('/api/teams', async (req, res) => {
     requesterIsAdmin = requester?.isAdmin ?? false;
   }
 
-  const tiebreakers = computeTiebreakers(await getRounds());
+  // Records shown here include results already reported in the round in
+  // progress, not just closed rounds, so standings update as results come in.
+  const rounds = await getRounds();
+  const tiebreakers = computeTiebreakers(rounds);
+  const provisional = computeProvisionalRecords(rounds);
 
   const resolved = await Promise.all(
     allTeams.map(async (t) => {
-      const r = { ...(await resolveTeam(t)), omw: tiebreakers.get(t.captainId)?.omw ?? null };
+      const base = await resolveTeam(t);
+      const live = provisional.get(t.captainId);
+      const wins = base.wins + (live?.wins ?? 0);
+      const losses = base.losses + (live?.losses ?? 0);
+      const r = {
+        ...base,
+        wins,
+        losses,
+        eliminated: losses >= ELIMINATION_LOSSES,
+        omw: tiebreakers.get(t.captainId)?.omw ?? null,
+      };
       return requesterIsAdmin ? { ...r, paid: t.paid ?? false } : r;
     })
   );

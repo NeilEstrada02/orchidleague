@@ -83,10 +83,31 @@ export async function getRounds() {
 // averaging opponents' match-win percentages.
 const MIN_MATCH_WIN_PCT = 1 / 3;
 
-// Opponents' match-win percentage (OMW%) per team, from closed rounds only
-// (same point at which W/L records are applied). Byes are ignored both as an
-// opponent and in a team's own match-win percentage, per the Magic tournament
-// rules. Returns Map<captainId, { omw }>; teams with no opponents yet are absent.
+// Wins and losses already decided in the round that's still in progress --
+// matches with a reported result, plus the bye win -- that haven't been
+// applied to team records yet (that only happens when the round closes).
+// Unreported matches aren't counted; they only become losses at close.
+// Returns Map<captainId, { wins, losses }>.
+export function computeProvisionalRecords(rounds) {
+  const result = new Map();
+  const add = (id, key) => {
+    if (!result.has(id)) result.set(id, { wins: 0, losses: 0 });
+    result.get(id)[key]++;
+  };
+  const open = rounds.find((r) => r.status === 'open');
+  for (const p of open?.pairings ?? []) {
+    if (!p.teamB) add(p.teamA, 'wins');
+    else if (p.result === 'A') { add(p.teamA, 'wins'); add(p.teamB, 'losses'); }
+    else if (p.result === 'B') { add(p.teamB, 'wins'); add(p.teamA, 'losses'); }
+  }
+  return result;
+}
+
+// Opponents' match-win percentage (OMW%) per team, from closed rounds plus
+// any matches already reported in the round in progress. Byes are ignored
+// both as an opponent and in a team's own match-win percentage, per the Magic
+// tournament rules. Returns Map<captainId, { omw }>; teams with no opponents
+// yet are absent.
 export function computeTiebreakers(rounds) {
   const records = new Map();
   const opponents = new Map();
@@ -96,9 +117,10 @@ export function computeTiebreakers(rounds) {
   };
 
   for (const round of rounds) {
-    if (round.status !== 'closed') continue;
     for (const p of round.pairings) {
       if (!p.teamB) continue;
+      // In the open round only reported matches have happened so far.
+      if (round.status !== 'closed' && !p.result) continue;
       const a = record(p.teamA);
       const b = record(p.teamB);
       a.matches++;

@@ -744,6 +744,14 @@ function App() {
     </table>
   )
 
+  const renderStandingsNote = () => (
+    <p className="muted small standings-note">
+      {openRound && `Includes results reported so far in Round ${openRound.number}, which is still in progress. `}
+      Ties are broken by OMW% — the average match-win percentage of the teams you've played (each opponent counts for
+      at least 33.3%, byes are ignored).
+    </p>
+  )
+
   // ---------- Home ----------
 
   const renderHome = () => (
@@ -878,10 +886,7 @@ function App() {
         <section className="panel">
           <h2>Standings</h2>
           {renderStandingsTable(standings)}
-          <p className="muted small standings-note">
-            Ties are broken by OMW% — the average match-win percentage of the teams you've played (each opponent counts
-            for at least 33.3%, byes are ignored), based on completed rounds.
-          </p>
+          {renderStandingsNote()}
         </section>
       )}
     </div>
@@ -1224,10 +1229,7 @@ function App() {
       ) : (
         <section className="panel">
           {renderStandingsTable(standings)}
-          <p className="muted small standings-note">
-            Ties are broken by OMW% — the average match-win percentage of the teams you've played (each opponent counts
-            for at least 33.3%, byes are ignored), based on completed rounds.
-          </p>
+          {renderStandingsNote()}
         </section>
       )}
     </>
