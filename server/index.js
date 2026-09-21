@@ -21,27 +21,41 @@ import {
   swapSeats,
   setPaid,
   SEATS,
-  applyRoundResults,
-  resetAllRecords,
 } from './teamStore.js';
 import {
   getSettings,
   setSignupsOpen,
   setDummyAccountsEnabled,
+  setSeasonNumber,
+  setPlannedCutSize,
+  setFirstRound,
 } from './settingsStore.js';
 import { seedDummyAccounts, clearDummyAccounts } from './dummyAccounts.js';
 import {
   getRounds,
   getCurrentRound,
-  closeCurrentRound,
-  generateNextRound,
   reportResult,
-  resetRounds,
   backfillCurrentRoundSeats,
   computeTiebreakers,
   computeProvisionalRecords,
+  setPairingResult,
+  swapSnapshotSeats,
+  setSnapshotDecklist,
+  undoOpenRound,
 } from './pairingStore.js';
-import { getRoundStartTime } from './schedule.js';
+import {
+  advanceRound,
+  startBracket,
+  endSeason,
+  resetSeasonData,
+  recomputeTeamRecords,
+  ELIMINATION_LOSSES,
+} from './seasonFlow.js';
+import { getBracket, CUT_SIZES, roundLabel, winnerOf } from './bracketStore.js';
+import { getHallOfFame, upsertHallOfFame, removeHallOfFame, listArchives } from './seasonStore.js';
+import { createBackup, listBackups, getBackup, restoreBackup, ensureNightlyBackup } from './backupStore.js';
+import { logAudit, getAudit } from './auditStore.js';
+import { getRoundStartTime, isValidFirstRound } from './schedule.js';
 import { pickDueReminder, claimReminder, releaseReminder } from './reminderScheduler.js';
 import { lookupCards } from './cardData.js';
 import {
@@ -75,7 +89,6 @@ if (!DISCORD_CLIENT_ID || !DISCORD_CLIENT_SECRET || !DISCORD_REDIRECT_URI || !SE
 }
 
 const isProduction = NODE_ENV === 'production';
-const ELIMINATION_LOSSES = 3;
 const REMINDER_CHANNEL_ID = '1375356544417271900'; // #league-announcements
 const autoRemindersActive = isProduction || process.env.RENDER === 'true';
 
@@ -108,21 +121,24 @@ async function maybeAutoAdvance() {
   if (autoAdvanceInProgress) return;
   autoAdvanceInProgress = true;
   try {
+    // No schedule (a fresh season) means nothing starts on its own.
+    const { firstRound } = await getSettings();
+    if (!firstRound) return;
     const rounds = await getRounds();
     let currentCount = rounds.length;
     const now = Date.now();
+    let backedUp = false;
 
-    while (getRoundStartTime(currentCount + 1).getTime() <= now) {
-      const closeResult = await closeCurrentRound();
-      if (closeResult.deltas.length > 0) {
-        await applyRoundResults(closeResult.deltas);
+    while (getRoundStartTime(currentCount + 1, firstRound).getTime() <= now) {
+      // A snapshot just before a round is closed and the next one built, so a
+      // bad advance can be rolled back. Throttled, and only when a round is
+      // actually about to change.
+      if (!backedUp && (await getCurrentRound())) {
+        await createBackup('pre-advance', '', { minIntervalMs: 30 * 60 * 1000 });
+        backedUp = true;
       }
-      const allTeams = await getAllTeams();
-      const eligible = allTeams.filter((t) => t.memberIds.length === 2 && (t.losses ?? 0) < ELIMINATION_LOSSES);
-      if (eligible.length < 2) break;
-      const allUsers = await getAllUsers();
-      const decklistsById = new Map(allUsers.map((u) => [u.id, u.decklist ?? '']));
-      await generateNextRound(eligible, decklistsById);
+      const result = await advanceRound();
+      if (!result.advanced) break;
       currentCount++;
     }
   } finally {
@@ -163,10 +179,11 @@ async function checkNewRoundAnnouncement() {
   if (announceInProgress || !isDiscordBotConfigured()) return;
   announceInProgress = true;
   try {
+    const { firstRound } = await getSettings();
     const round = await getCurrentRound();
-    if (!round?.createdAt) return;
+    if (!firstRound || !round?.createdAt) return;
     const createdMs = new Date(round.createdAt).getTime();
-    const scheduledMs = getRoundStartTime(round.number).getTime();
+    const scheduledMs = getRoundStartTime(round.number, firstRound).getTime();
     if (createdMs < scheduledMs || Date.now() - createdMs > 30 * 60 * 1000) return;
     if (!(await claimReminder(round.number, 'announce'))) return;
 
@@ -177,7 +194,9 @@ async function checkNewRoundAnnouncement() {
           roleId,
           round.number,
           CLIENT_URL,
-          getRoundStartTime(round.number + 1)
+          getRoundStartTime(round.number + 1, firstRound),
+          round.label ?? null,
+          round.stage === 'playoff'
         )
       : { ok: false, error: 'no_role' };
     if (result.ok) {
@@ -200,9 +219,10 @@ async function checkResultReminders() {
   if (reminderCheckInProgress || !isDiscordBotConfigured()) return;
   reminderCheckInProgress = true;
   try {
+    const { firstRound } = await getSettings();
     const round = await getCurrentRound();
-    if (!round) return;
-    const deadline = getRoundStartTime(round.number + 1);
+    if (!firstRound || !round) return;
+    const deadline = getRoundStartTime(round.number + 1, firstRound);
     const hours = pickDueReminder(deadline.getTime() - Date.now());
     if (hours === null) return;
 
@@ -210,7 +230,14 @@ async function checkResultReminders() {
     if (matches.length === 0) return;
     if (!(await claimReminder(round.number, hours))) return;
 
-    const result = await sendResultReminder(REMINDER_CHANNEL_ID, matches, CLIENT_URL, deadline, `${hours} hours`);
+    const result = await sendResultReminder(
+      REMINDER_CHANNEL_ID,
+      matches,
+      CLIENT_URL,
+      deadline,
+      `${hours} hours`,
+      round.stage === 'playoff'
+    );
     if (result.ok) {
       console.log(`Sent ${hours}h result reminder for round ${round.number} (${matches.length} matches).`);
     } else {
@@ -440,7 +467,7 @@ app.post('/auth/logout', (req, res) => {
 app.get('/api/settings', async (req, res) => {
   const settings = await getSettings();
   const rounds = await getRounds();
-  const nextRoundAt = getRoundStartTime(rounds.length + 1).toISOString();
+  const nextRoundAt = settings.firstRound ? getRoundStartTime(rounds.length + 1, settings.firstRound).toISOString() : null;
   res.json({
     settings: { ...settings, nextRoundAt, discordBotConfigured: isDiscordBotConfigured(), autoRemindersActive },
   });
@@ -690,6 +717,8 @@ app.get('/api/pairings', async (req, res) => {
   const resolved = rounds.map((round) => ({
     number: round.number,
     status: round.status,
+    stage: round.stage ?? 'swiss',
+    label: round.label ?? null,
     pairings: round.pairings.map((p) => {
       const teamAInfo = resolveTeamIn(ctx, teamIn(ctx, p.teamA));
       const teamBInfo = p.teamB ? resolveTeamIn(ctx, teamIn(ctx, p.teamB)) : null;
@@ -717,6 +746,9 @@ app.get('/api/pairings', async (req, res) => {
         teamA: { captainId: p.teamA, name: teamDisplayName(teamAInfo) },
         teamB: teamBInfo ? { captainId: p.teamB, name: teamDisplayName(teamBInfo) } : null,
         result: p.result,
+        seedA: p.seedA ?? null,
+        seedB: p.seedB ?? null,
+        autoResolved: Boolean(p.autoResolved),
         matchups,
       };
     }),
@@ -725,14 +757,26 @@ app.get('/api/pairings', async (req, res) => {
   res.json({ rounds: resolved });
 });
 
-app.post('/api/admin/reset-standings', async (req, res) => {
-  if (!req.session.user) return res.status(401).json({ error: 'not_authenticated' });
+// Sends the error response and returns null unless the requester is an admin.
+async function requireAdmin(req, res) {
+  if (!req.session.user) {
+    res.status(401).json({ error: 'not_authenticated' });
+    return null;
+  }
   const stored = await getUser(req.session.user.id);
   if (!stored?.isAdmin) {
-    return res.status(403).json({ error: 'not_admin' });
+    res.status(403).json({ error: 'not_admin' });
+    return null;
   }
-  await resetRounds();
-  await resetAllRecords();
+  return stored;
+}
+
+app.post('/api/admin/reset-standings', async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  await createBackup('pre-reset');
+  await resetSeasonData();
+  await logAudit(admin, 'reset_standings');
   res.json({ ok: true });
 });
 
@@ -770,8 +814,10 @@ app.post('/api/admin/send-decklist-reminder', async (req, res) => {
     return res.json({ sent: false, count: 0 });
   }
 
+  const { firstRound } = await getSettings();
+  if (!firstRound) return res.status(400).json({ error: 'no_schedule' });
   const rounds = await getRounds();
-  const nextRoundAt = getRoundStartTime(rounds.length + 1);
+  const nextRoundAt = getRoundStartTime(rounds.length + 1, firstRound);
 
   const result = await sendDecklistReminder(
     REMINDER_CHANNEL_ID,
@@ -805,8 +851,10 @@ app.post('/api/admin/send-result-reminder', async (req, res) => {
     return res.json({ sent: false, matchCount: 0 });
   }
 
-  const nextRoundAt = getRoundStartTime(round.number + 1);
-  const result = await sendResultReminder(REMINDER_CHANNEL_ID, matches, CLIENT_URL, nextRoundAt);
+  const { firstRound } = await getSettings();
+  if (!firstRound) return res.status(400).json({ error: 'no_schedule' });
+  const nextRoundAt = getRoundStartTime(round.number + 1, firstRound);
+  const result = await sendResultReminder(REMINDER_CHANNEL_ID, matches, CLIENT_URL, nextRoundAt, null, round.stage === 'playoff');
   if (!result.ok) {
     return res.status(502).json({ error: 'send_failed' });
   }
@@ -814,27 +862,16 @@ app.post('/api/admin/send-result-reminder', async (req, res) => {
 });
 
 app.post('/api/pairings/advance', async (req, res) => {
-  if (!req.session.user) return res.status(401).json({ error: 'not_authenticated' });
-  const stored = await getUser(req.session.user.id);
-  if (!stored?.isAdmin) {
-    return res.status(403).json({ error: 'not_admin' });
-  }
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
 
-  const closeResult = await closeCurrentRound();
-  if (closeResult.deltas.length > 0) {
-    await applyRoundResults(closeResult.deltas);
+  await createBackup('pre-advance', 'manual', { minIntervalMs: 60_000 });
+  const result = await advanceRound();
+  await logAudit(admin, 'advance_round', { advanced: result.advanced, reason: result.reason ?? null, round: result.round?.number ?? null });
+  if (!result.advanced) {
+    return res.status(400).json({ error: result.reason ?? 'not_enough_teams', roundClosed: result.roundClosed });
   }
-
-  const allTeams = await getAllTeams();
-  const eligible = allTeams.filter((t) => t.memberIds.length === 2 && (t.losses ?? 0) < ELIMINATION_LOSSES);
-  if (eligible.length < 2) {
-    return res.status(400).json({ error: 'not_enough_teams', roundClosed: closeResult.closed });
-  }
-
-  const allUsers = await getAllUsers();
-  const decklistsById = new Map(allUsers.map((u) => [u.id, u.decklist ?? '']));
-  const newRound = await generateNextRound(eligible, decklistsById);
-  res.json({ round: newRound });
+  res.json({ round: result.round });
 });
 
 app.post('/api/pairings/report', async (req, res) => {
@@ -925,6 +962,289 @@ app.get('/api/teams', async (req, res) => {
   res.json({ teams: resolved });
 });
 
+// ---------- Top cut bracket ----------
+
+app.get('/api/bracket', async (req, res) => {
+  const [bracket, rounds, ctx] = await Promise.all([getBracket(), getRounds(), loadContext()]);
+  if (!bracket) return res.json({ active: false });
+
+  const seedOf = new Map(bracket.seeds.map((s) => [s.captainId, s.seed]));
+  const teamInfo = (captainId) => {
+    const info = resolveTeamIn(ctx, teamIn(ctx, captainId));
+    return {
+      captainId,
+      seed: seedOf.get(captainId) ?? null,
+      name: teamDisplayName(info),
+      members: [info.captainName, ...info.members.map((m) => m.displayName)],
+    };
+  };
+
+  const played = rounds
+    .filter((r) => r.stage === 'playoff')
+    .map((r) => ({
+      number: r.number,
+      label: r.label,
+      status: r.status,
+      matches: r.pairings.map((p) => ({
+        id: p.id,
+        teamA: teamInfo(p.teamA),
+        teamB: teamInfo(p.teamB),
+        result: p.result,
+        winnerId: p.result ? winnerOf(p) : null,
+        autoResolved: Boolean(p.autoResolved),
+      })),
+    }));
+
+  // Rounds still to come, so the bracket shows its whole shape from the start.
+  const upcoming = [];
+  for (let remaining = bracket.size; remaining >= 2; remaining /= 2) {
+    upcoming.push({ label: roundLabel(remaining), matchCount: remaining / 2 });
+  }
+
+  res.json({
+    active: true,
+    size: bracket.size,
+    seeds: bracket.seeds.map((s) => teamInfo(s.captainId)),
+    rounds: played,
+    upcoming: upcoming.slice(played.length),
+    champion: bracket.championId ? teamInfo(bracket.championId) : null,
+  });
+});
+
+app.post('/api/admin/cut', async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { action, size } = req.body ?? {};
+  if (await getBracket()) return res.status(400).json({ error: 'cut_already_started' });
+
+  if (action === 'cancel') {
+    await setPlannedCutSize(null);
+    await logAudit(admin, 'cancel_cut');
+    return res.json({ ok: true });
+  }
+  if (!['schedule', 'start'].includes(action) || !CUT_SIZES.includes(size)) {
+    return res.status(400).json({ error: 'invalid_body' });
+  }
+  const fullTeams = (await getAllTeams()).filter((t) => t.memberIds.length === 2);
+  if (fullTeams.length < size) return res.status(400).json({ error: 'not_enough_teams' });
+
+  if (action === 'schedule') {
+    await setPlannedCutSize(size);
+    await logAudit(admin, 'schedule_cut', { size });
+    return res.json({ ok: true });
+  }
+
+  // Start now: close the round in progress and build the bracket right away.
+  await createBackup('pre-cut', '', { minIntervalMs: 60_000 });
+  await setPlannedCutSize(size);
+  const result = await advanceRound();
+  await logAudit(admin, 'start_cut', { size, started: result.advanced, reason: result.reason ?? null });
+  if (!result.advanced) {
+    await setPlannedCutSize(null);
+    return res.status(400).json({ error: result.reason ?? 'cut_failed' });
+  }
+  res.json({ ok: true, round: result.round.number });
+});
+
+// ---------- Hall of Fame & seasons ----------
+
+app.get('/api/hall-of-fame', async (req, res) => {
+  const [entries, archives] = await Promise.all([getHallOfFame(), listArchives()]);
+  res.json({
+    entries: entries.map((entry) => ({
+      ...entry,
+      standings: archives.find((a) => a.season === entry.season)?.standings ?? null,
+    })),
+  });
+});
+
+app.post('/api/admin/hall-of-fame', async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { season, champion, handle, members } = req.body ?? {};
+  if (
+    !Number.isInteger(season) ||
+    season < 1 ||
+    typeof champion !== 'string' ||
+    !champion.trim() ||
+    champion.length > 80 ||
+    (handle !== undefined && (typeof handle !== 'string' || handle.length > 60)) ||
+    (members !== undefined && (!Array.isArray(members) || members.length > 8 || members.some((m) => typeof m !== 'string' || m.length > 60)))
+  ) {
+    return res.status(400).json({ error: 'invalid_body' });
+  }
+  const entry = { season, champion: champion.trim() };
+  if (handle?.trim()) entry.handle = handle.trim();
+  const memberList = (members ?? []).map((m) => m.trim()).filter(Boolean);
+  if (memberList.length > 0) entry.members = memberList;
+  await upsertHallOfFame(entry);
+  await logAudit(admin, 'hall_of_fame_save', { season, champion: entry.champion });
+  res.json({ ok: true });
+});
+
+app.delete('/api/admin/hall-of-fame/:season', async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const season = Number(req.params.season);
+  if (!Number.isInteger(season)) return res.status(400).json({ error: 'invalid_body' });
+  await removeHallOfFame(season);
+  await logAudit(admin, 'hall_of_fame_remove', { season });
+  res.json({ ok: true });
+});
+
+app.post('/api/admin/season/number', async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { number } = req.body ?? {};
+  if (!Number.isInteger(number) || number < 1 || number > 99) return res.status(400).json({ error: 'invalid_body' });
+  await setSeasonNumber(number);
+  await logAudit(admin, 'set_season_number', { number });
+  res.json({ ok: true });
+});
+
+// Sets (or, with clear: true, removes) the season's first-round date/time in
+// Eastern wall-clock terms. Later rounds start weekly from it.
+app.post('/api/admin/season/schedule', async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { clear, firstRound, confirmPast } = req.body ?? {};
+  if (clear === true) {
+    await setFirstRound(null);
+    await logAudit(admin, 'clear_schedule');
+    return res.json({ ok: true });
+  }
+  if (!isValidFirstRound(firstRound)) return res.status(400).json({ error: 'invalid_body' });
+  const { year, month, day, hour, minute } = firstRound;
+  // If the next round's start has already passed under this schedule it would
+  // begin at once -- and any other past-due rounds would be closed with losses
+  // -- so make the admin confirm that on purpose.
+  const nextStart = getRoundStartTime((await getRounds()).length + 1, firstRound);
+  if (nextStart.getTime() <= Date.now() && confirmPast !== true) {
+    return res.status(409).json({ error: 'schedule_in_past' });
+  }
+  await setFirstRound({ year, month, day, hour, minute });
+  await logAudit(admin, 'set_schedule', { year, month, day, hour, minute });
+  res.json({ ok: true });
+});
+
+// Archives the season, adds its champion to the Hall of Fame, and resets for
+// the next one. champion: 'bracket', a team's captain id, or null.
+app.post('/api/admin/season/end', async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { champion } = req.body ?? {};
+  if (champion !== null && typeof champion !== 'string') return res.status(400).json({ error: 'invalid_body' });
+  if (champion === 'bracket' && !(await getBracket())?.championId) return res.status(400).json({ error: 'no_bracket_champion' });
+  if (champion && champion !== 'bracket' && !(await getTeam(champion))) return res.status(400).json({ error: 'team_not_found' });
+
+  const result = await endSeason(champion);
+  await logAudit(admin, 'end_season', { season: result.season, champion: result.champion?.name ?? null });
+  res.json({ ok: true, ...result });
+});
+
+// ---------- Backups ----------
+
+app.get('/api/admin/backups', async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  res.json({ backups: await listBackups() });
+});
+
+app.post('/api/admin/backups', async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const backup = await createBackup('manual', `by ${admin.displayName}`);
+  await logAudit(admin, 'create_backup', { id: backup.id });
+  res.json({ backup });
+});
+
+app.get('/api/admin/backups/:id/download', async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  const backup = await getBackup(req.params.id);
+  if (!backup) return res.status(404).json({ error: 'backup_not_found' });
+  res.setHeader('Content-Disposition', `attachment; filename="orchid-league-backup-${backup.id}.json"`);
+  res.type('application/json').send(JSON.stringify(backup, null, 2));
+});
+
+app.post('/api/admin/backups/:id/restore', async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const backup = await restoreBackup(req.params.id);
+  if (!backup) return res.status(404).json({ error: 'backup_not_found' });
+  await logAudit(admin, 'restore_backup', { id: backup.id, createdAt: backup.createdAt });
+  res.json({ ok: true });
+});
+
+app.get('/api/admin/audit', async (req, res) => {
+  if (!(await requireAdmin(req, res))) return;
+  res.json({ entries: await getAudit(50) });
+});
+
+// ---------- Round corrections ----------
+// For fixing mistakes in a round after it's been generated. Each change is
+// audited with before/after details, and a (throttled) backup is taken first.
+
+const correctionBackup = () => createBackup('pre-correction', '', { minIntervalMs: 10 * 60 * 1000 });
+
+app.post('/api/admin/rounds/result', async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { roundNumber, pairingId, result } = req.body ?? {};
+  if (!Number.isInteger(roundNumber) || typeof pairingId !== 'string' || ![null, 'A', 'B', 'double-loss'].includes(result)) {
+    return res.status(400).json({ error: 'invalid_body' });
+  }
+  await correctionBackup();
+  const change = await setPairingResult(roundNumber, pairingId, result);
+  if (change.error) return res.status(400).json({ error: change.error });
+  if (change.roundClosed && change.stage === 'swiss') await recomputeTeamRecords();
+  await logAudit(admin, 'set_result', { roundNumber, pairingId, before: change.before, after: change.after });
+  res.json({ ok: true });
+});
+
+app.post('/api/admin/rounds/swap-seats', async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { roundNumber, pairingId, side, seatA, seatB } = req.body ?? {};
+  if (!Number.isInteger(roundNumber) || typeof pairingId !== 'string' || !['A', 'B'].includes(side)) {
+    return res.status(400).json({ error: 'invalid_body' });
+  }
+  await correctionBackup();
+  const change = await swapSnapshotSeats(roundNumber, pairingId, side, seatA, seatB);
+  if (change.error) return res.status(400).json({ error: change.error });
+  await logAudit(admin, 'swap_round_seats', { roundNumber, pairingId, side, seatA, seatB, before: change.before, after: change.after });
+  res.json({ ok: true });
+});
+
+app.post('/api/admin/rounds/decklist', async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { roundNumber, pairingId, playerId, text } = req.body ?? {};
+  if (
+    !Number.isInteger(roundNumber) ||
+    typeof pairingId !== 'string' ||
+    typeof playerId !== 'string' ||
+    typeof text !== 'string' ||
+    text.length > 5000
+  ) {
+    return res.status(400).json({ error: 'invalid_body' });
+  }
+  await correctionBackup();
+  const change = await setSnapshotDecklist(roundNumber, pairingId, playerId, text);
+  if (change.error) return res.status(400).json({ error: change.error });
+  await logAudit(admin, 'set_round_decklist', { roundNumber, pairingId, playerId, ...change });
+  res.json({ ok: true });
+});
+
+// Removes the newest round if it's still open, e.g. one started by mistake.
+app.post('/api/admin/rounds/undo', async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  await createBackup('pre-undo-round');
+  const change = await undoOpenRound();
+  if (change.error) return res.status(400).json({ error: change.error });
+  await logAudit(admin, 'undo_round', change);
+  res.json({ ok: true, ...change });
+});
+
 // In production this single service also serves the built React app,
 // so there's only one deployable unit and no cross-origin cookie issues.
 const clientDist = path.join(__dirname, '..', 'client', 'dist');
@@ -944,6 +1264,7 @@ if (autoRemindersActive) {
     await maybeAutoAdvance().catch((err) => console.error('Auto-advance check failed:', err));
     await checkNewRoundAnnouncement().catch((err) => console.error('Round announcement failed:', err));
     await checkResultReminders().catch((err) => console.error('Result reminder check failed:', err));
+    await ensureNightlyBackup().catch((err) => console.error('Nightly backup failed:', err));
   }, 60 * 1000);
 }
 

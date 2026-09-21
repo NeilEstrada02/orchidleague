@@ -185,11 +185,12 @@ export async function sendDecklistReminder(channelId, userIds, siteUrl, nextRoun
 // round that hasn't reported a result yet, @-mentioning both full teams
 // (captain + members) per match so anyone involved can report it.
 // matches: [{ teamAName, teamBName, mentionIds: [id, ...] }]
-export async function sendResultReminder(channelId, matches, siteUrl, nextRoundAt, timeLeftLabel = null) {
+export async function sendResultReminder(channelId, matches, siteUrl, nextRoundAt, timeLeftLabel = null, playoff = false) {
   if (!botConfigured()) return { ok: false, error: 'not_configured' };
   const unixSeconds = Math.floor(new Date(nextRoundAt).getTime() / 1000);
   const lead = timeLeftLabel ? `⏰ Result reminder (${timeLeftLabel} left)` : '⏰ Result reminder';
-  const header = `${lead} — these matches haven't reported a result yet. Anyone who hasn't by <t:${unixSeconds}:R> (<t:${unixSeconds}:F>) gets an automatic loss. Report at ${siteUrl}:\n\n`;
+  const consequence = playoff ? 'the higher seed advances' : 'anyone who hasn\'t gets an automatic loss';
+  const header = `${lead} — these matches haven't reported a result yet. If no result is in by <t:${unixSeconds}:R> (<t:${unixSeconds}:F>), ${consequence}. Report at ${siteUrl}:\n\n`;
 
   const chunks = [];
   let current = [];
@@ -219,9 +220,13 @@ export async function sendResultReminder(channelId, matches, siteUrl, nextRoundA
 }
 
 // Pings the whole league role to say a new round's pairings are up.
-export async function sendNewRoundAnnouncement(channelId, roleId, roundNumber, siteUrl, deadline) {
+export async function sendNewRoundAnnouncement(channelId, roleId, roundNumber, siteUrl, deadline, label = null, playoff = false) {
   const unixSeconds = Math.floor(new Date(deadline).getTime() / 1000);
-  const content = `<@&${roleId}> 🌸 **Round ${roundNumber} is live!** Pairings and decklists are up at ${siteUrl}. Report your result by <t:${unixSeconds}:F> (<t:${unixSeconds}:R>) — a match with no report counts as a loss for both teams.`;
+  const title = label ? `Round ${roundNumber} — ${label}` : `Round ${roundNumber}`;
+  const consequence = playoff
+    ? 'if no result is reported, the higher seed advances'
+    : 'a match with no report counts as a loss for both teams';
+  const content = `<@&${roleId}> 🌸 **${title} is live!** Pairings and decklists are up at ${siteUrl}. Report your result by <t:${unixSeconds}:F> (<t:${unixSeconds}:R>) — ${consequence}.`;
   return sendChannelMessage(channelId, content, [], [roleId]);
 }
 

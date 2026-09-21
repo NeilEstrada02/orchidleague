@@ -1,7 +1,14 @@
 const TIME_ZONE = 'America/New_York';
 
-// Round 1 kicks off Sunday, August 30, 2026 at 11:59pm Eastern.
-const ROUND_1_ANCHOR = { year: 2026, month: 8, day: 30, hour: 23, minute: 59 };
+// The season this site launched with: Round 1 on Sunday, August 30, 2026 at
+// 11:59pm Eastern. Later seasons set their own first-round date in settings.
+export const DEFAULT_FIRST_ROUND = { year: 2026, month: 8, day: 30, hour: 23, minute: 59 };
+
+// firstRound: { year, month, day, hour, minute } in Eastern wall-clock time.
+export function isValidFirstRound(fr) {
+  const ok = (v, min, max) => Number.isInteger(v) && v >= min && v <= max;
+  return Boolean(fr) && ok(fr.year, 2024, 2100) && ok(fr.month, 1, 12) && ok(fr.day, 1, 31) && ok(fr.hour, 0, 23) && ok(fr.minute, 0, 59);
+}
 
 // Converts a wall-clock date/time in `timeZone` to the correct UTC instant,
 // accounting for whatever DST offset applies on that specific date.
@@ -41,16 +48,16 @@ function zonedTimeToUtc(y, m, d, hh, mm, timeZone) {
 // Eastern wall-clock time. Recomputed per-round from the calendar date
 // (never by adding milliseconds to a prior UTC instant) so a DST
 // transition mid-season keeps 11:59pm Eastern fixed instead of drifting.
-export function getRoundStartTime(roundNumber) {
+export function getRoundStartTime(roundNumber, firstRound) {
   const weeksToAdd = roundNumber - 1;
-  const scratch = new Date(Date.UTC(ROUND_1_ANCHOR.year, ROUND_1_ANCHOR.month - 1, ROUND_1_ANCHOR.day));
+  const scratch = new Date(Date.UTC(firstRound.year, firstRound.month - 1, firstRound.day));
   scratch.setUTCDate(scratch.getUTCDate() + weeksToAdd * 7);
   return zonedTimeToUtc(
     scratch.getUTCFullYear(),
     scratch.getUTCMonth() + 1,
     scratch.getUTCDate(),
-    ROUND_1_ANCHOR.hour,
-    ROUND_1_ANCHOR.minute,
+    firstRound.hour,
+    firstRound.minute,
     TIME_ZONE
   );
 }

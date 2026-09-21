@@ -2,17 +2,21 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import './App.css'
 import { DeckView, LazyDetails } from './DeckView.jsx'
 import { cardKey } from './decklist.js'
+import { SERVER_URL } from './api.js'
+import { Bracket } from './Bracket.jsx'
+import { BackupsPanel, RoundEditor, SeasonPanel } from './AdminSections.jsx'
 
-const SERVER_URL = import.meta.env.VITE_SERVER_URL || ''
 const SEATS = ['pioneer', 'modern', 'standard']
 const SEAT_LABELS = { pioneer: 'Pioneer', modern: 'Modern', standard: 'Standard' }
-const TAB_IDS = ['home', 'myteam', 'pairings', 'standings', 'teams', 'decklists', 'roster', 'halloffame', 'rules', 'admin']
+const TAB_IDS = ['home', 'myteam', 'pairings', 'standings', 'teams', 'decklists', 'roster', 'halloffame', 'bracket', 'rules', 'admin']
 
-const HALL_OF_FAME = [
-  { season: 3, champion: 'Curve Fillers', members: ['Neil Estrada', 'Liam Etelson', 'Zev Goldhaber-Gordon'] },
-  { season: 2, champion: 'Frank Kaner', handle: '@_adlai' },
-  { season: 1, champion: 'Julian Weiswasser', handle: '@selfcongrats' },
-]
+const roundName = (round) => (round.label ? `Round ${round.number} · ${round.label}` : `Round ${round.number}`)
+
+const ADVANCE_ERRORS = {
+  not_enough_teams: 'Need at least 2 full teams to generate pairings.',
+  season_complete: 'The season is complete — end it from Admin → Season.',
+  invalid_size: 'That top cut size is not valid.',
+}
 
 const tabFromHash = () => {
   const id = window.location.hash.replace('#', '')
@@ -27,6 +31,10 @@ function App() {
   const [busy, setBusy] = useState(false)
   const [memberBusyId, setMemberBusyId] = useState(null)
   const [error, setError] = useState('')
+  const [notice, setNotice] = useState('')
+  const [bracket, setBracket] = useState({ active: false })
+  const [hallOfFame, setHallOfFame] = useState([])
+  const [adminSection, setAdminSection] = useState('overview')
   const [activeTab, setActiveTab] = useState(tabFromHash)
   const [selectedRound, setSelectedRound] = useState(null)
   const [decklistFormat, setDecklistFormat] = useState('standard')
@@ -98,8 +106,29 @@ function App() {
     return fetchDecklists(round)
   }
 
+  const fetchBracket = () =>
+    fetch(`${SERVER_URL}/api/bracket`, { credentials: 'include' })
+      .then((res) => res.json())
+      .then((data) => setBracket(data ?? { active: false }))
+      .catch(() => {})
+
+  const fetchHallOfFame = () =>
+    fetch(`${SERVER_URL}/api/hall-of-fame`)
+      .then((res) => res.json())
+      .then((data) => setHallOfFame(data.entries ?? []))
+      .catch(() => {})
+
   const refreshAll = () =>
-    Promise.all([fetchMe(), fetchLeague(), fetchTeams(), fetchSettings(), fetchPairings(), fetchDecklists()])
+    Promise.all([
+      fetchMe(),
+      fetchLeague(),
+      fetchTeams(),
+      fetchSettings(),
+      fetchPairings(),
+      fetchDecklists(),
+      fetchBracket(),
+      fetchHallOfFame(),
+    ])
 
   // Card details (type, mana cost, image) for rendering decklists, shared by
   // every deck on screen and fetched only for cards not asked about yet.
@@ -136,9 +165,7 @@ function App() {
   }, [])
 
   useEffect(() => {
-    Promise.all([fetchMe(), fetchLeague(), fetchTeams(), fetchSettings(), fetchPairings(), fetchDecklists()]).finally(() =>
-      setLoading(false)
-    )
+    refreshAll().finally(() => setLoading(false))
 
     const params = new URLSearchParams(window.location.search)
     const err = params.get('error')
@@ -464,7 +491,9 @@ function App() {
     const message = !current
       ? 'Start Round 1? This will generate pairings for all eligible teams.'
       : current.status === 'open'
-        ? `Close Round ${current.number} and start Round ${current.number + 1}? Anyone who hasn't reported a result will be given a loss.`
+        ? current.stage === 'playoff'
+          ? `Close ${current.label ?? `Round ${current.number}`} and move the bracket along? Any match nobody reported goes to the higher seed.`
+          : `Close Round ${current.number} and start Round ${current.number + 1}? Anyone who hasn't reported a result will be given a loss.`
         : `Start Round ${current.number + 1}?`
     if (!window.confirm(message)) return
 
@@ -477,7 +506,12 @@ function App() {
       })
       const data = await res.json()
       if (!res.ok) {
-        setError(data.error === 'not_enough_teams' ? 'Need at least 2 full teams to generate pairings.' : 'Could not advance the round.')
+        await refreshAll()
+        if (data.error === 'season_complete' && data.roundClosed) {
+          setNotice("The final is decided — the season is complete. End it from Admin → Season when you're ready.")
+        } else {
+          setError(ADVANCE_ERRORS[data.error] ?? 'Could not advance the round.')
+        }
         return
       }
       await refreshAll()
@@ -513,7 +547,7 @@ function App() {
 
   const handleResetSeason = async () => {
     const confirmed = window.confirm(
-      'Reset all standings? This permanently clears every round, pairing, and win/loss record for the entire league. This cannot be undone.'
+      'Reset all standings? This clears every round, pairing, win/loss record, the top cut bracket and the round schedule. A backup is saved first, and it can be restored from Admin → Backups.'
     )
     if (!confirmed) return
 
@@ -664,11 +698,17 @@ function App() {
   const formatClass = (personId) => (formatBySeat[personId] ? `format-${formatBySeat[personId]}` : '')
 
   const currentRound = pairings[0]
-  const advanceRoundLabel = !currentRound
-    ? 'Start Round 1'
-    : currentRound.status === 'open'
-      ? `Close Round ${currentRound.number} & Start Round ${currentRound.number + 1}`
-      : `Start Round ${currentRound.number + 1}`
+  const playoffActive = Boolean(bracket.active && !bracket.champion)
+  const seasonComplete = Boolean(bracket.active && bracket.champion)
+  const advanceRoundLabel = seasonComplete
+    ? 'Season complete'
+    : !currentRound
+      ? 'Start Round 1'
+      : currentRound.status === 'open'
+        ? playoffActive
+          ? `Close ${currentRound.label ?? `Round ${currentRound.number}`}${currentRound.label === 'Finals' ? '' : ' & advance the bracket'}`
+          : `Close Round ${currentRound.number} & Start Round ${currentRound.number + 1}`
+        : `Start Round ${currentRound.number + 1}`
 
   // The signed-in user's own seat in a pairing and who they're facing --
   // only their own opponent, never other players on either team.
@@ -718,8 +758,9 @@ function App() {
 
   const pairingResultLabel = (p) => {
     if (!p.teamB) return `${p.teamA.name} — Bye`
-    if (p.result === 'A') return `${p.teamA.name} won`
-    if (p.result === 'B') return `${p.teamB.name} won`
+    const note = p.autoResolved ? ' (no result reported — higher seed)' : ''
+    if (p.result === 'A') return `${p.teamA.name} won${note}`
+    if (p.result === 'B') return `${p.teamB.name} won${note}`
     if (p.result === 'double-loss') return 'No result reported — both teams lost'
     return 'Pending'
   }
@@ -736,6 +777,7 @@ function App() {
     { id: 'home', label: 'Home' },
     ...(user?.enrolled ? [{ id: 'myteam', label: 'My Team' }] : []),
     { id: 'pairings', label: 'Pairings' },
+    ...(bracket.active ? [{ id: 'bracket', label: 'Bracket' }] : []),
     { id: 'standings', label: 'Standings' },
     { id: 'teams', label: 'Teams' },
     { id: 'decklists', label: 'Decklists' },
@@ -903,7 +945,7 @@ function App() {
 
         {user?.enrolled ? (
           <section className="panel">
-            <h2>{openRound ? `Round ${openRound.number}` : 'This Round'}</h2>
+            <h2>{openRound ? roundName(openRound) : 'This Round'}</h2>
             {!openRound ? (
               <p className="muted">No round is in progress right now.</p>
             ) : !myPairing ? (
@@ -1227,7 +1269,7 @@ function App() {
                 className={`pill ${shownRound?.number === r.number ? 'active' : ''}`}
                 onClick={() => setSelectedRound(r.number)}
               >
-                Round {r.number}
+                {roundName(r)}
                 {r.status === 'open' && ' · Current'}
               </button>
             ))}
@@ -1237,7 +1279,7 @@ function App() {
 
       {myCurrentMatch && shownRound?.status === 'open' && (
         <div className="my-match-card">
-          <h3 className="round-heading">Your Matchup — Round {myCurrentMatch.round.number}</h3>
+          <h3 className="round-heading">Your Matchup — {roundName(myCurrentMatch.round)}</h3>
           <p className="my-match-summary">
             <span className="matchup-format">{SEAT_LABELS[myCurrentMatch.mine.seat]}:</span>{' '}
             <span className={`format-${myCurrentMatch.mine.seat}`}>{myCurrentMatch.mine.me.displayName}</span>
@@ -1264,8 +1306,9 @@ function App() {
               return (
                 <li key={p.id} className={`pairing-row ${mine ? 'pairing-mine' : ''}`}>
                   <div className="pairing-teams">
+                    {p.seedA ? `#${p.seedA} ` : ''}
                     {p.teamA.name}
-                    {p.teamB ? ` vs ${p.teamB.name}` : ''}
+                    {p.teamB ? ` vs ${p.seedB ? `#${p.seedB} ` : ''}${p.teamB.name}` : ''}
                   </div>
                   {p.matchups.length > 0 && (
                     <ul className="matchup-list">
@@ -1415,7 +1458,7 @@ function App() {
               className={`pill ${decklistsData.round === r.number ? 'active' : ''}`}
               onClick={() => selectDecklistRound(r.status === 'open' ? null : r.number)}
             >
-              Round {r.number}
+              {roundName(r)}
               {r.status === 'open' && ' · Current'}
             </button>
           ))}
@@ -1530,7 +1573,7 @@ function App() {
         <h2>Hall of Fame</h2>
       </div>
       <div className="hof-grid">
-        {HALL_OF_FAME.map((entry) => (
+        {hallOfFame.map((entry) => (
           <section key={entry.season} className="panel hof-card">
             <div className="hof-trophy" aria-hidden="true">
               🏆
@@ -1545,9 +1588,44 @@ function App() {
                 ))}
               </ul>
             )}
+            {entry.standings && (
+              <LazyDetails summary="Final standings">
+                <table className="standings-table hof-standings">
+                  <tbody>
+                    {entry.standings.map((row) => (
+                      <tr key={row.rank}>
+                        <td className="rank-cell">{row.rank}</td>
+                        <td>
+                          {row.name}
+                          <div className="standings-players muted">{row.members.join(' · ')}</div>
+                        </td>
+                        <td>
+                          {row.wins}-{row.losses}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </LazyDetails>
+            )}
           </section>
         ))}
       </div>
+    </>
+  )
+
+  // ---------- Bracket ----------
+
+  const renderBracket = () => (
+    <>
+      <div className="page-head">
+        <h2>Top Cut</h2>
+        <span className="muted">Top {bracket.size} · single elimination</span>
+      </div>
+      <Bracket bracket={bracket} myCaptainId={user?.myTeamCaptainId ?? null} />
+      <p className="muted small standings-note">
+        Seeded by the final Swiss standings. If a match isn't reported by the deadline, the higher seed advances.
+      </p>
     </>
   )
 
@@ -1570,7 +1648,7 @@ function App() {
           <strong>Elimination:</strong> Teams play until they accumulate 3 losses, at which point they are eliminated.
         </li>
         <li>
-          <strong>Top Cut:</strong> There will be a top cut to the top N teams (likely 4 or 2) depending on team count.
+          <strong>Top Cut:</strong> After the Swiss rounds there is a single-elimination top cut (likely the top 4 or 2 teams, depending on team count), seeded by the standings. If a playoff match isn't reported by the deadline, the higher seed advances.
         </li>
         <li>
           <strong>Platforms:</strong> The <span className="format-standard">Standard</span> and{' '}
@@ -1591,11 +1669,8 @@ function App() {
 
   // ---------- Admin ----------
 
-  const renderAdmin = () => (
+  const renderAdminOverview = () => (
     <>
-      <div className="page-head">
-        <h2>Admin</h2>
-      </div>
       <div className="stat-row">
         <div className="stat">
           <div className="stat-value">{league.length}</div>
@@ -1628,7 +1703,7 @@ function App() {
             <button className="secondary-btn" disabled={settingsBusy} onClick={handleToggleSignups}>
               {settings.signupsOpen ? 'Close Signups' : 'Open Signups'}
             </button>
-            <button className="secondary-btn" disabled={roundBusy} onClick={handleAdvanceRound}>
+            <button className="secondary-btn" disabled={roundBusy || seasonComplete} onClick={handleAdvanceRound}>
               {advanceRoundLabel}
             </button>
           </div>
@@ -1679,9 +1754,58 @@ function App() {
               Reset All Standings
             </button>
           </div>
-          <p className="muted small">Clears every round, pairing and win/loss record. This can't be undone.</p>
+          <p className="muted small">
+            Clears every round, pairing, win/loss record, the top cut bracket and the round schedule. A backup is saved
+            first, so it can be restored from the Backups tab. To finish a season properly, use Season → End the season.
+          </p>
         </section>
       </div>
+    </>
+  )
+
+  const notify = {
+    ok: (message) => {
+      setError('')
+      setNotice(message)
+    },
+    error: (message) => {
+      setNotice('')
+      setError(message)
+    },
+  }
+
+  const ADMIN_SECTIONS = [
+    ['overview', 'Overview'],
+    ['rounds', 'Fix a round'],
+    ['season', 'Season'],
+    ['backups', 'Backups'],
+  ]
+
+  const renderAdmin = () => (
+    <>
+      <div className="page-head">
+        <h2>Admin</h2>
+        <div className="pill-row">
+          {ADMIN_SECTIONS.map(([id, label]) => (
+            <button key={id} className={`pill ${adminSection === id ? 'active' : ''}`} onClick={() => setAdminSection(id)}>
+              {label}
+            </button>
+          ))}
+        </div>
+      </div>
+      {adminSection === 'overview' && renderAdminOverview()}
+      {adminSection === 'rounds' && <RoundEditor pairings={pairings} notify={notify} refresh={refreshAll} />}
+      {adminSection === 'season' && (
+        <SeasonPanel
+          settings={settings}
+          bracket={bracket}
+          teams={teams}
+          hallOfFame={hallOfFame}
+          notify={notify}
+          refresh={refreshAll}
+        />
+      )}
+      {adminSection === 'backups' && <BackupsPanel notify={notify} refresh={refreshAll} />}
     </>
   )
 
@@ -1694,6 +1818,7 @@ function App() {
     decklists: renderDecklists,
     roster: renderRoster,
     halloffame: renderHallOfFame,
+    bracket: renderBracket,
     rules: renderRules,
     admin: renderAdmin,
   }
@@ -1744,6 +1869,14 @@ function App() {
           <div className="toast-error" role="alert">
             <span>{error}</span>
             <button className="toast-close" aria-label="Dismiss" onClick={() => setError('')}>
+              ×
+            </button>
+          </div>
+        )}
+        {notice && (
+          <div className="toast-ok" role="status">
+            <span>{notice}</span>
+            <button className="toast-close" aria-label="Dismiss" onClick={() => setNotice('')}>
               ×
             </button>
           </div>

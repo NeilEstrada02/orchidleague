@@ -30,9 +30,12 @@ function shuffle(arr) {
   return copy;
 }
 
+const isPlayoff = (round) => round.stage === 'playoff';
+
 function buildRematchSet(rounds) {
   const set = new Set();
   for (const round of rounds) {
+    if (isPlayoff(round)) continue;
     for (const p of round.pairings) {
       if (p.teamB) set.add(pairKey(p.teamA, p.teamB));
     }
@@ -43,6 +46,7 @@ function buildRematchSet(rounds) {
 function buildByeHistory(rounds) {
   const set = new Set();
   for (const round of rounds) {
+    if (isPlayoff(round)) continue;
     for (const p of round.pairings) {
       if (!p.teamB) set.add(p.teamA);
     }
@@ -94,7 +98,7 @@ export function computeProvisionalRecords(rounds) {
     if (!result.has(id)) result.set(id, { wins: 0, losses: 0 });
     result.get(id)[key]++;
   };
-  const open = rounds.find((r) => r.status === 'open');
+  const open = rounds.find((r) => r.status === 'open' && !isPlayoff(r));
   for (const p of open?.pairings ?? []) {
     if (!p.teamB) add(p.teamA, 'wins');
     else if (p.result === 'A') { add(p.teamA, 'wins'); add(p.teamB, 'losses'); }
@@ -117,6 +121,7 @@ export function computeTiebreakers(rounds) {
   };
 
   for (const round of rounds) {
+    if (isPlayoff(round)) continue;
     for (const p of round.pairings) {
       if (!p.teamB) continue;
       // In the open round only reported matches have happened so far.
@@ -184,10 +189,25 @@ export async function getCurrentRound() {
 // Finalizes the currently open round: any pairing with no reported result
 // (and that isn't a bye) is scored as a loss for BOTH teams. Returns the
 // win/loss deltas to apply to team records, and whether a round was closed.
+// In a playoff round nothing counts toward Swiss records, and a match nobody
+// reported goes to the higher seed (a bracket can't have two losers).
 export async function closeCurrentRound() {
   const rounds = await loadRounds();
   const round = rounds[rounds.length - 1];
   if (!round || round.status !== 'open') return { deltas: [], closed: false };
+
+  if (isPlayoff(round)) {
+    for (const p of round.pairings) {
+      if (!p.result) {
+        p.result = p.seedA <= p.seedB ? 'A' : 'B';
+        p.autoResolved = true;
+      }
+    }
+    round.status = 'closed';
+    round.closedAt = new Date().toISOString();
+    await saveRounds(rounds);
+    return { deltas: [], closed: true };
+  }
 
   const deltas = [];
   for (const p of round.pairings) {
@@ -328,4 +348,136 @@ export async function reportResult(pairingId, teamCaptainId, outcome) {
   pairing.reportedBy = teamCaptainId;
   await saveRounds(rounds);
   return round;
+}
+
+// matches: [{ a, b, seedA, seedB }] where a/b are teams ({ captainId, memberIds,
+// seats }), team A being the higher seed. Snapshots seats and decklists just
+// like a Swiss round, so playoff matchups stay fixed once posted.
+export async function generatePlayoffRound(matches, label, decklistsById = new Map()) {
+  const rounds = await loadRounds();
+  const roundNumber = rounds.length + 1;
+  const pairings = matches.map((m, idx) => ({
+    id: `r${roundNumber}-${idx + 1}`,
+    teamA: m.a.captainId,
+    teamB: m.b.captainId,
+    seedA: m.seedA,
+    seedB: m.seedB,
+    result: null,
+    reportedBy: null,
+    seatsSnapshot: { teamA: m.a.seats ?? BLANK_SEATS, teamB: m.b.seats ?? BLANK_SEATS },
+    decklistsSnapshot: {
+      teamA: snapshotDecklists(m.a, decklistsById),
+      teamB: snapshotDecklists(m.b, decklistsById),
+    },
+  }));
+  const round = {
+    number: roundNumber,
+    status: 'open',
+    stage: 'playoff',
+    label,
+    pairings,
+    createdAt: new Date().toISOString(),
+    closedAt: null,
+  };
+  rounds.push(round);
+  await saveRounds(rounds);
+  return round;
+}
+
+// Wins and losses per team that closed Swiss rounds add up to -- what the
+// stored team records should always equal. Used to rebuild records after an
+// admin corrects a result in a round that's already closed.
+export function computeClosedRecords(rounds) {
+  const result = new Map();
+  const add = (id, key) => {
+    if (!result.has(id)) result.set(id, { wins: 0, losses: 0 });
+    result.get(id)[key]++;
+  };
+  for (const round of rounds) {
+    if (round.status !== 'closed' || isPlayoff(round)) continue;
+    for (const p of round.pairings) {
+      if (!p.teamB) add(p.teamA, 'wins');
+      else if (p.result === 'A') { add(p.teamA, 'wins'); add(p.teamB, 'losses'); }
+      else if (p.result === 'B') { add(p.teamB, 'wins'); add(p.teamA, 'losses'); }
+      else { add(p.teamA, 'losses'); add(p.teamB, 'losses'); }
+    }
+  }
+  return result;
+}
+
+// ---------- Admin corrections ----------
+// Each returns { error } for a bad request, or the details of what changed.
+
+function findPairing(rounds, roundNumber, pairingId) {
+  const round = rounds.find((r) => r.number === roundNumber);
+  if (!round) return { error: 'round_not_found' };
+  const pairing = round.pairings.find((p) => p.id === pairingId);
+  if (!pairing) return { error: 'pairing_not_found' };
+  return { round, pairing };
+}
+
+// result: 'A' | 'B' | 'double-loss' | null. A round still in progress can be
+// set back to "pending"; a closed round always has a result. Playoff results
+// can only be changed while their round is open, since the next round is built
+// from them.
+export async function setPairingResult(roundNumber, pairingId, result) {
+  const rounds = await loadRounds();
+  const found = findPairing(rounds, roundNumber, pairingId);
+  if (found.error) return found;
+  const { round, pairing } = found;
+  if (!pairing.teamB) return { error: 'bye_has_no_result' };
+
+  const open = round.status === 'open';
+  if (!open && isPlayoff(round)) return { error: 'playoff_round_closed' };
+  const allowed = open ? [null, 'A', 'B'] : ['A', 'B', 'double-loss'];
+  if (!allowed.includes(result)) return { error: 'invalid_result' };
+
+  const before = pairing.result;
+  pairing.result = result;
+  pairing.reportedBy = result ? 'admin' : null;
+  delete pairing.autoResolved;
+  await saveRounds(rounds);
+  return { before, after: result, roundClosed: !open, stage: round.stage ?? 'swiss' };
+}
+
+// Swaps two players' formats within one team's lineup for a round. Decklists
+// are stored per player, so they follow the player automatically.
+export async function swapSnapshotSeats(roundNumber, pairingId, side, seatA, seatB) {
+  const rounds = await loadRounds();
+  const found = findPairing(rounds, roundNumber, pairingId);
+  if (found.error) return found;
+  const lineup = found.pairing.seatsSnapshot?.[side === 'B' ? 'teamB' : 'teamA'];
+  if (!lineup) return { error: 'no_lineup' };
+  if (!(seatA in BLANK_SEATS) || !(seatB in BLANK_SEATS) || seatA === seatB) return { error: 'invalid_seats' };
+
+  const before = { ...lineup };
+  [lineup[seatA], lineup[seatB]] = [lineup[seatB], lineup[seatA]];
+  await saveRounds(rounds);
+  return { before, after: { ...lineup } };
+}
+
+// Replaces the decklist locked in for one player in one round.
+export async function setSnapshotDecklist(roundNumber, pairingId, playerId, text) {
+  const rounds = await loadRounds();
+  const found = findPairing(rounds, roundNumber, pairingId);
+  if (found.error) return found;
+  const side = ['teamA', 'teamB'].find((s) => found.pairing.decklistsSnapshot?.[s] && playerId in found.pairing.decklistsSnapshot[s]);
+  if (!side) return { error: 'player_not_in_pairing' };
+
+  const before = found.pairing.decklistsSnapshot[side][playerId];
+  found.pairing.decklistsSnapshot[side][playerId] = text;
+  await saveRounds(rounds);
+  return { beforeLength: before.length, afterLength: text.length };
+}
+
+// Removes the newest round if it's still open (e.g. started by mistake). Team
+// records are untouched because an open round hasn't been applied to them.
+export async function undoOpenRound() {
+  const rounds = await loadRounds();
+  const last = rounds[rounds.length - 1];
+  if (!last) return { error: 'no_rounds' };
+  if (last.status !== 'open') return { error: 'round_already_closed' };
+  rounds.pop();
+  await saveRounds(rounds);
+  return { removed: last.number, stage: last.stage ?? 'swiss', pairings: last.pairings.length };
 }

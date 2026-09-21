@@ -211,3 +211,15 @@ export async function resetAllRecords() {
   }
   await saveTeams(teams);
 }
+
+// records: Map<captainId, { wins, losses }>. Sets every team's record to the
+// given values (0-0 for teams not in the map).
+export async function setAllRecords(records) {
+  const teams = await loadTeams();
+  for (const team of Object.values(teams)) {
+    const record = records.get(team.captainId);
+    team.wins = record?.wins ?? 0;
+    team.losses = record?.losses ?? 0;
+  }
+  await saveTeams(teams);
+}

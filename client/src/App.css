@@ -1236,3 +1236,211 @@
     display: none;
   }
 }
+
+/* ---------- Notices ---------- */
+
+.toast-ok {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  background: rgba(127, 214, 143, 0.12);
+  border: 1px solid rgba(127, 214, 143, 0.4);
+  color: #8fdc9e;
+  border-radius: 10px;
+  padding: 0.6rem 0.9rem;
+  margin-bottom: 1rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+
+/* ---------- Hall of Fame standings ---------- */
+
+.hof-card .decklist-details {
+  text-align: left;
+  margin-top: 0.9rem;
+}
+
+.hof-standings td {
+  padding: 0.35rem 0.4rem;
+  font-size: 0.85rem;
+  text-align: left !important;
+}
+
+.hof-standings td:last-child {
+  text-align: right !important;
+  white-space: nowrap;
+}
+
+/* ---------- Bracket ---------- */
+
+.champion-banner {
+  text-align: center;
+  margin-bottom: 1rem;
+  border-color: rgba(224, 192, 92, 0.45);
+  background: linear-gradient(180deg, rgba(224, 192, 92, 0.1), var(--bg-card) 70%);
+}
+
+.bracket-scroll {
+  overflow-x: auto;
+  padding-bottom: 0.5rem;
+}
+
+.bracket-grid {
+  display: flex;
+  gap: 1.5rem;
+  min-width: min-content;
+}
+
+.bracket-col {
+  display: flex;
+  flex-direction: column;
+  min-width: 250px;
+  flex: 1;
+}
+
+.bracket-col-title {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
+  margin-bottom: 0.6rem;
+}
+
+.bracket-matches {
+  display: flex;
+  flex-direction: column;
+  justify-content: space-around;
+  gap: 1rem;
+  flex: 1;
+}
+
+.bracket-match {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 0.35rem;
+}
+
+.bracket-match.tbd {
+  color: var(--text-muted);
+  font-style: italic;
+  text-align: center;
+  padding: 1.6rem 0.5rem;
+  border-style: dashed;
+  background: transparent;
+}
+
+.bracket-team {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.4rem 0.55rem;
+  border-radius: 6px;
+  background: var(--bg-inset);
+  margin-bottom: 0.25rem;
+  font-size: 0.9rem;
+}
+
+.bracket-team.winner {
+  font-weight: 700;
+  border: 1px solid rgba(224, 192, 92, 0.6);
+}
+
+.bracket-team.loser {
+  opacity: 0.5;
+}
+
+.bracket-team.mine {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.bracket-seed {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  min-width: 1.6rem;
+}
+
+.bracket-name {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.bracket-status {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  padding: 0.1rem 0.55rem 0.2rem;
+}
+
+/* ---------- Admin editors ---------- */
+
+.editor-pairing {
+  padding: 0.5rem 0.75rem !important;
+}
+
+.editor-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.9rem;
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border);
+}
+
+.editor-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.editor-row-title {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text-secondary);
+}
+
+.editor-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.editor-controls .text-input {
+  min-width: 0;
+}
+
+.editor-row .textarea-input {
+  min-height: 110px;
+  margin-bottom: 0.25rem;
+}
+
+.editor-row .small-btn {
+  align-self: flex-start;
+}
+
+.editor-undo {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.9rem;
+}
+
+.backup-actions {
+  display: flex;
+  gap: 0.9rem;
+  flex-shrink: 0;
+}
+
+.backup-actions a.link-btn {
+  text-decoration: none;
+}
+
+.audit-details {
+  overflow-wrap: anywhere;
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 0.72rem !important;
+}
