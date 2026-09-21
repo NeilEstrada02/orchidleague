@@ -973,16 +973,16 @@ function App() {
 
       <h3 className="sub-heading">Submitted decklist</h3>
       {user.decklist?.trim() ? (
-        <>
+        <LazyDetails summary="View formatted decklist">
           {decklistDraft !== user.decklist && (
             <p className="muted small">You have unsaved changes — save to update this preview.</p>
           )}
           <div className="deck-panel">
             <DeckView text={user.decklist} cardInfo={cardInfo} ensureCards={ensureCards} />
           </div>
-        </>
+        </LazyDetails>
       ) : (
-        <p className="muted small">Nothing submitted yet. Save a decklist above and a formatted preview will appear here.</p>
+        <p className="muted small">Nothing submitted yet. Save a decklist above and a formatted view will appear here.</p>
       )}
     </section>
   )
