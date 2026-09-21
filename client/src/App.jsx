@@ -62,34 +62,41 @@ function App() {
       .catch(() => setUser(null))
 
   const fetchLeague = () =>
-    fetch(`${SERVER_URL}/api/league`)
+    fetch(`${SERVER_URL}/api/league`, { credentials: 'include' })
       .then((res) => res.json())
       .then((data) => setLeague(data.users ?? []))
       .catch(() => {})
 
   const fetchTeams = () =>
-    fetch(`${SERVER_URL}/api/teams`)
+    fetch(`${SERVER_URL}/api/teams`, { credentials: 'include' })
       .then((res) => res.json())
       .then((data) => setTeams(data.teams ?? []))
       .catch(() => {})
 
   const fetchSettings = () =>
-    fetch(`${SERVER_URL}/api/settings`)
+    fetch(`${SERVER_URL}/api/settings`, { credentials: 'include' })
       .then((res) => res.json())
       .then((data) => setSettings(data.settings ?? { signupsOpen: true, dummyAccountsEnabled: false }))
       .catch(() => {})
 
   const fetchPairings = () =>
-    fetch(`${SERVER_URL}/api/pairings`)
+    fetch(`${SERVER_URL}/api/pairings`, { credentials: 'include' })
       .then((res) => res.json())
       .then((data) => setPairings(data.rounds ?? []))
       .catch(() => {})
 
-  const fetchDecklists = () =>
-    fetch(`${SERVER_URL}/api/decklists`)
+  // null follows whichever round is currently in progress.
+  const decklistRoundRef = useRef(null)
+  const fetchDecklists = (round = decklistRoundRef.current) =>
+    fetch(`${SERVER_URL}/api/decklists${round ? `?round=${round}` : ''}`, { credentials: 'include' })
       .then((res) => res.json())
       .then((data) => setDecklistsData(data ?? { round: null, formats: { pioneer: [], modern: [], standard: [] } }))
       .catch(() => {})
+
+  const selectDecklistRound = (round) => {
+    decklistRoundRef.current = round
+    return fetchDecklists(round)
+  }
 
   const refreshAll = () =>
     Promise.all([fetchMe(), fetchLeague(), fetchTeams(), fetchSettings(), fetchPairings(), fetchDecklists()])
@@ -1400,9 +1407,25 @@ function App() {
           </div>
         )}
       </div>
+      {pairings.length > 1 && (
+        <div className="pill-row round-picker">
+          {pairings.map((r) => (
+            <button
+              key={r.number}
+              className={`pill ${decklistsData.round === r.number ? 'active' : ''}`}
+              onClick={() => selectDecklistRound(r.status === 'open' ? null : r.number)}
+            >
+              Round {r.number}
+              {r.status === 'open' && ' · Current'}
+            </button>
+          ))}
+        </div>
+      )}
       {decklistsData.round === null ? (
         <section className="panel">
-          <p className="muted">No round is currently in progress.</p>
+          <p className="muted">
+            {pairings.length > 0 ? 'No round is in progress — pick a round above.' : 'No round is currently in progress.'}
+          </p>
         </section>
       ) : (
         <section className="panel">

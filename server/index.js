@@ -139,20 +139,16 @@ app.use((req, res, next) => {
 // teams' Discord IDs so anyone involved gets pinged.
 async function getUnreportedMatches(round) {
   const unreported = round.pairings.filter((p) => p.teamB && !p.result);
-  const matches = await Promise.all(
-    unreported.map(async (p) => {
-      const [teamA, teamB, captainA, captainB] = await Promise.all([
-        getTeam(p.teamA),
-        getTeam(p.teamB),
-        getUser(p.teamA),
-        getUser(p.teamB),
-      ]);
-      const teamAName = teamA?.teamName || `${captainA?.displayName ?? 'Unknown'}'s Team`;
-      const teamBName = teamB?.teamName || `${captainB?.displayName ?? 'Unknown'}'s Team`;
-      const mentionIds = [p.teamA, ...(teamA?.memberIds ?? []), p.teamB, ...(teamB?.memberIds ?? [])];
-      return { teamAName, teamBName, mentionIds };
-    })
-  );
+  const ctx = await loadContext();
+  const matches = unreported.map((p) => {
+    const teamA = teamIn(ctx, p.teamA);
+    const teamB = teamIn(ctx, p.teamB);
+    return {
+      teamAName: teamA.teamName || `${nameIn(ctx, p.teamA)}'s Team`,
+      teamBName: teamB.teamName || `${nameIn(ctx, p.teamB)}'s Team`,
+      mentionIds: [p.teamA, ...teamA.memberIds, p.teamB, ...teamB.memberIds],
+    };
+  });
   const teamCount = new Set(unreported.flatMap((p) => [p.teamA, p.teamB])).size;
   return { matches, teamCount };
 }
@@ -228,38 +224,60 @@ async function checkResultReminders() {
   }
 }
 
-async function resolveTeam(team) {
-  if (!team) return null;
-  const captain = await getUser(team.captainId);
-  const members = await Promise.all(
-    team.memberIds.map(async (id) => ({ id, displayName: (await getUser(id))?.displayName ?? 'Unknown' }))
-  );
+// Users and teams loaded once per request, so resolving any number of teams
+// or seat snapshots doesn't go back to Redis for each lookup.
+async function loadContext() {
+  const [users, teams] = await Promise.all([getAllUsers(), getAllTeams()]);
+  return { users: new Map(users.map((u) => [u.id, u])), teams: new Map(teams.map((t) => [t.captainId, t])) };
+}
+
+const nameIn = (ctx, id) => ctx.users.get(id)?.displayName ?? 'Unknown';
+
+// A team from an old round may since have been disbanded; fall back to a stub
+// so its past pairings still display.
+const teamIn = (ctx, captainId) => ctx.teams.get(captainId) ?? { captainId, memberIds: [], seats: null };
+
+function resolveTeamIn(ctx, team) {
   const rawSeats = team.seats ?? { pioneer: null, modern: null, standard: null };
   const seats = {};
   for (const seat of SEATS) {
     const personId = rawSeats[seat] ?? null;
-    seats[seat] = personId ? { id: personId, displayName: (await getUser(personId))?.displayName ?? 'Unknown' } : null;
+    seats[seat] = personId ? { id: personId, displayName: nameIn(ctx, personId) } : null;
   }
   return {
     captainId: team.captainId,
-    captainName: captain?.displayName ?? 'Unknown',
+    captainName: nameIn(ctx, team.captainId),
     teamName: team.teamName ?? '',
     charity: team.charity ?? '',
     wins: team.wins ?? 0,
     losses: team.losses ?? 0,
     eliminated: (team.losses ?? 0) >= ELIMINATION_LOSSES,
-    members,
+    members: team.memberIds.map((id) => ({ id, displayName: nameIn(ctx, id) })),
     seats,
   };
 }
 
-async function resolveSeatsSnapshot(snapshot) {
+function resolveSeatsIn(ctx, snapshot) {
   const result = {};
   for (const seat of SEATS) {
     const id = snapshot?.[seat] ?? null;
-    result[seat] = id ? { id, displayName: (await getUser(id))?.displayName ?? 'Unknown' } : null;
+    result[seat] = id ? { id, displayName: nameIn(ctx, id) } : null;
   }
   return result;
+}
+
+const teamDisplayName = (info) => info.teamName || `${info.captainName}'s Team`;
+
+async function resolveTeam(team) {
+  if (!team) return null;
+  const users = await getAllUsers();
+  return resolveTeamIn({ users: new Map(users.map((u) => [u.id, u])) }, team);
+}
+
+function teamCaptainIdOf(ctx, userId) {
+  if (ctx.users.get(userId)?.isCaptain) return userId;
+  for (const team of ctx.teams.values()) if (team.memberIds.includes(userId)) return team.captainId;
+  return null;
 }
 
 async function getUserTeamCaptainId(userId) {
@@ -612,22 +630,28 @@ app.post('/api/cards', async (req, res) => {
   res.json(await lookupCards(names));
 });
 
+// Every decklist locked in for a round: the one in progress by default, or any
+// round by number (?round=N).
 app.get('/api/decklists', async (req, res) => {
-  const round = await getCurrentRound();
+  const requested = Number(req.query.round);
+  const round = Number.isInteger(requested)
+    ? (await getRounds()).find((r) => r.number === requested)
+    : await getCurrentRound();
   const formats = { pioneer: [], modern: [], standard: [] };
   if (!round) {
     return res.json({ round: null, formats });
   }
 
+  const ctx = await loadContext();
   for (const p of round.pairings) {
-    const teamAInfo = await resolveTeam(await getTeam(p.teamA));
-    const teamBInfo = p.teamB ? await resolveTeam(await getTeam(p.teamB)) : null;
-    const seatsA = p.seatsSnapshot ? await resolveSeatsSnapshot(p.seatsSnapshot.teamA) : teamAInfo.seats;
-    const seatsB = p.seatsSnapshot && teamBInfo ? await resolveSeatsSnapshot(p.seatsSnapshot.teamB) : teamBInfo?.seats;
+    const teamAInfo = resolveTeamIn(ctx, teamIn(ctx, p.teamA));
+    const teamBInfo = p.teamB ? resolveTeamIn(ctx, teamIn(ctx, p.teamB)) : null;
+    const seatsA = p.seatsSnapshot ? resolveSeatsIn(ctx, p.seatsSnapshot.teamA) : teamAInfo.seats;
+    const seatsB = p.seatsSnapshot && teamBInfo ? resolveSeatsIn(ctx, p.seatsSnapshot.teamB) : teamBInfo?.seats;
     const decklistsA = p.decklistsSnapshot?.teamA ?? {};
     const decklistsB = p.decklistsSnapshot?.teamB ?? {};
-    const teamAName = teamAInfo.teamName || `${teamAInfo.captainName}'s Team`;
-    const teamBName = teamBInfo ? teamBInfo.teamName || `${teamBInfo.captainName}'s Team` : null;
+    const teamAName = teamDisplayName(teamAInfo);
+    const teamBName = teamBInfo ? teamDisplayName(teamBInfo) : null;
 
     for (const seat of SEATS) {
       const a = seatsA[seat];
@@ -656,47 +680,47 @@ app.get('/api/decklists', async (req, res) => {
   res.json({ round: round.number, formats });
 });
 
+// Decklist text is only included for the viewer's own team's matchups (the
+// Pairings page shows "your deck vs. theirs"); everyone's decks for a round
+// are served by /api/decklists, so this payload doesn't grow with every round.
 app.get('/api/pairings', async (req, res) => {
-  const rounds = await getRounds();
-  const resolved = await Promise.all(
-    rounds.map(async (round) => ({
-      number: round.number,
-      status: round.status,
-      pairings: await Promise.all(
-        round.pairings.map(async (p) => {
-          const teamAInfo = await resolveTeam(await getTeam(p.teamA));
-          const teamBInfo = p.teamB ? await resolveTeam(await getTeam(p.teamB)) : null;
-          // Pairings generated before seat-snapshotting existed fall back to
-          // live seats; every pairing from here on uses the seats as they
-          // stood at the moment the round was generated, so a captain
-          // swapping seats mid-round doesn't retroactively change matchups
-          // already in progress.
-          const seatsA = p.seatsSnapshot ? await resolveSeatsSnapshot(p.seatsSnapshot.teamA) : teamAInfo.seats;
-          const seatsB = p.seatsSnapshot && teamBInfo ? await resolveSeatsSnapshot(p.seatsSnapshot.teamB) : teamBInfo?.seats;
-          const decklistsA = p.decklistsSnapshot?.teamA ?? {};
-          const decklistsB = p.decklistsSnapshot?.teamB ?? {};
-          const withDecklist = (player, decklists) =>
-            player ? { ...player, decklist: decklists[player.id] || '' } : null;
-          const matchups = teamBInfo
-            ? SEATS.map((seat) => ({
-                seat,
-                playerA: withDecklist(seatsA[seat], decklistsA),
-                playerB: withDecklist(seatsB[seat], decklistsB),
-              }))
-            : [];
-          return {
-            id: p.id,
-            teamA: { captainId: p.teamA, name: teamAInfo.teamName || `${teamAInfo.captainName}'s Team` },
-            teamB: teamBInfo
-              ? { captainId: p.teamB, name: teamBInfo.teamName || `${teamBInfo.captainName}'s Team` }
-              : null,
-            result: p.result,
-            matchups,
-          };
-        })
-      ),
-    }))
-  );
+  const [rounds, ctx] = await Promise.all([getRounds(), loadContext()]);
+  const myCaptainId = req.session.user ? teamCaptainIdOf(ctx, req.session.user.id) : null;
+
+  const resolved = rounds.map((round) => ({
+    number: round.number,
+    status: round.status,
+    pairings: round.pairings.map((p) => {
+      const teamAInfo = resolveTeamIn(ctx, teamIn(ctx, p.teamA));
+      const teamBInfo = p.teamB ? resolveTeamIn(ctx, teamIn(ctx, p.teamB)) : null;
+      // Pairings generated before seat-snapshotting existed fall back to
+      // live seats; every pairing from here on uses the seats as they
+      // stood at the moment the round was generated, so a captain
+      // swapping seats mid-round doesn't retroactively change matchups
+      // already in progress.
+      const seatsA = p.seatsSnapshot ? resolveSeatsIn(ctx, p.seatsSnapshot.teamA) : teamAInfo.seats;
+      const seatsB = p.seatsSnapshot && teamBInfo ? resolveSeatsIn(ctx, p.seatsSnapshot.teamB) : teamBInfo?.seats;
+      const decklistsA = p.decklistsSnapshot?.teamA ?? {};
+      const decklistsB = p.decklistsSnapshot?.teamB ?? {};
+      const isMine = Boolean(myCaptainId && (p.teamA === myCaptainId || p.teamB === myCaptainId));
+      const withDecklist = (player, decklists) =>
+        player && isMine ? { ...player, decklist: decklists[player.id] || '' } : player;
+      const matchups = teamBInfo
+        ? SEATS.map((seat) => ({
+            seat,
+            playerA: withDecklist(seatsA[seat], decklistsA),
+            playerB: withDecklist(seatsB[seat], decklistsB),
+          }))
+        : [];
+      return {
+        id: p.id,
+        teamA: { captainId: p.teamA, name: teamDisplayName(teamAInfo) },
+        teamB: teamBInfo ? { captainId: p.teamB, name: teamDisplayName(teamBInfo) } : null,
+        result: p.result,
+        matchups,
+      };
+    }),
+  }));
   resolved.sort((a, b) => b.number - a.number);
   res.json({ rounds: resolved });
 });
@@ -872,38 +896,31 @@ app.post('/api/admin/team-paid', async (req, res) => {
 });
 
 app.get('/api/teams', async (req, res) => {
-  const allTeams = await getAllTeams();
+  const [ctx, rounds] = await Promise.all([loadContext(), getRounds()]);
 
   // Whether a team has paid is admin-only, same as decklist-submission
   // status on the roster -- never exposed to the general public.
-  let requesterIsAdmin = false;
-  if (req.session.user) {
-    const requester = await getUser(req.session.user.id);
-    requesterIsAdmin = requester?.isAdmin ?? false;
-  }
+  const requesterIsAdmin = Boolean(req.session.user && ctx.users.get(req.session.user.id)?.isAdmin);
 
   // Records shown here include results already reported in the round in
   // progress, not just closed rounds, so standings update as results come in.
-  const rounds = await getRounds();
   const tiebreakers = computeTiebreakers(rounds);
   const provisional = computeProvisionalRecords(rounds);
 
-  const resolved = await Promise.all(
-    allTeams.map(async (t) => {
-      const base = await resolveTeam(t);
-      const live = provisional.get(t.captainId);
-      const wins = base.wins + (live?.wins ?? 0);
-      const losses = base.losses + (live?.losses ?? 0);
-      const r = {
-        ...base,
-        wins,
-        losses,
-        eliminated: losses >= ELIMINATION_LOSSES,
-        omw: tiebreakers.get(t.captainId)?.omw ?? null,
-      };
-      return requesterIsAdmin ? { ...r, paid: t.paid ?? false } : r;
-    })
-  );
+  const resolved = [...ctx.teams.values()].map((t) => {
+    const base = resolveTeamIn(ctx, t);
+    const live = provisional.get(t.captainId);
+    const wins = base.wins + (live?.wins ?? 0);
+    const losses = base.losses + (live?.losses ?? 0);
+    const r = {
+      ...base,
+      wins,
+      losses,
+      eliminated: losses >= ELIMINATION_LOSSES,
+      omw: tiebreakers.get(t.captainId)?.omw ?? null,
+    };
+    return requesterIsAdmin ? { ...r, paid: t.paid ?? false } : r;
+  });
   resolved.sort((a, b) => a.captainName.localeCompare(b.captainName));
   res.json({ teams: resolved });
 });
