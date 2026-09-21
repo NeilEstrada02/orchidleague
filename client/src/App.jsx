@@ -1,5 +1,7 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import './App.css'
+import { DeckView, LazyDetails } from './DeckView.jsx'
+import { cardKey } from './decklist.js'
 
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || ''
 const SEATS = ['pioneer', 'modern', 'standard']
@@ -85,6 +87,40 @@ function App() {
 
   const refreshAll = () =>
     Promise.all([fetchMe(), fetchLeague(), fetchTeams(), fetchSettings(), fetchPairings(), fetchDecklists()])
+
+  // Card details (type, mana cost, image) for rendering decklists, shared by
+  // every deck on screen and fetched only for cards not asked about yet.
+  const [cardInfo, setCardInfo] = useState({})
+  const requestedCards = useRef(new Set())
+  const ensureCards = useCallback((names) => {
+    const wanted = []
+    for (const name of names) {
+      const key = cardKey(name)
+      if (name.length <= 120 && !requestedCards.current.has(key)) {
+        requestedCards.current.add(key)
+        wanted.push(name)
+      }
+    }
+    for (let i = 0; i < wanted.length; i += 100) {
+      const batch = wanted.slice(i, i + 100)
+      fetch(`${SERVER_URL}/api/cards`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ names: batch }),
+      })
+        .then((res) => {
+          if (!res.ok) throw new Error('card lookup failed')
+          return res.json()
+        })
+        .then((data) => {
+          setCardInfo((prev) => ({ ...prev, ...data.cards }))
+          for (const key of data.unresolved ?? []) requestedCards.current.delete(key)
+        })
+        .catch(() => {
+          for (const name of batch) requestedCards.current.delete(cardKey(name))
+        })
+    }
+  }, [])
 
   useEffect(() => {
     Promise.all([fetchMe(), fetchLeague(), fetchTeams(), fetchSettings(), fetchPairings(), fetchDecklists()]).finally(() =>
@@ -653,7 +689,7 @@ function App() {
         )}
       </div>
       {player?.decklist ? (
-        <pre className="decklist-text deck-panel-text">{player.decklist}</pre>
+        <DeckView text={player.decklist} cardInfo={cardInfo} ensureCards={ensureCards} />
       ) : (
         <span className="subtitle">{player ? 'No decklist submitted.' : 'No opponent seated.'}</span>
       )}
@@ -1217,10 +1253,11 @@ function App() {
                   )}
                   <div className="muted pairing-status">{pairingResultLabel(p)}</div>
                   {myMatchup && (
-                    <details className="decklist-details">
-                      <summary>View your deck and {myMatchup.opp?.displayName ?? 'your opponent'}'s deck</summary>
+                    <LazyDetails
+                      summary={`View your deck and ${myMatchup.opp?.displayName ?? 'your opponent'}'s deck`}
+                    >
                       {renderMyDecks(p.id, myMatchup)}
-                    </details>
+                    </LazyDetails>
                   )}
                   {canReport && renderReportButtons(p)}
                 </li>
@@ -1372,22 +1409,25 @@ function App() {
                     </span>
                   </div>
                   {entry.decklist ? (
-                    <details className="decklist-details">
-                      <summary>
-                        View Decklist
-                        <button
-                          className="link-btn copy-btn"
-                          onClick={(e) => {
-                            e.preventDefault()
-                            e.stopPropagation()
-                            handleCopyDecklist(entry.decklist, entry.playerId)
-                          }}
-                        >
-                          {copiedId === entry.playerId ? 'Copied!' : 'Copy'}
-                        </button>
-                      </summary>
-                      <pre className="decklist-text">{entry.decklist}</pre>
-                    </details>
+                    <LazyDetails
+                      summary={
+                        <>
+                          View Decklist
+                          <button
+                            className="link-btn copy-btn"
+                            onClick={(e) => {
+                              e.preventDefault()
+                              e.stopPropagation()
+                              handleCopyDecklist(entry.decklist, entry.playerId)
+                            }}
+                          >
+                            {copiedId === entry.playerId ? 'Copied!' : 'Copy'}
+                          </button>
+                        </>
+                      }
+                    >
+                      <DeckView text={entry.decklist} cardInfo={cardInfo} ensureCards={ensureCards} />
+                    </LazyDetails>
                   ) : (
                     <span className="muted">No decklist submitted.</span>
                   )}

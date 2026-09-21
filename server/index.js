@@ -43,6 +43,7 @@ import {
 } from './pairingStore.js';
 import { getRoundStartTime } from './schedule.js';
 import { pickDueReminder, claimReminder, releaseReminder } from './reminderScheduler.js';
+import { lookupCards } from './cardData.js';
 import {
   addRoleToMember,
   removeRoleFromMember,
@@ -585,6 +586,30 @@ app.post('/api/team/seats/swap', async (req, res) => {
     return res.status(404).json({ error: 'team_not_found' });
   }
   res.json({ team: await resolveTeam(team) });
+});
+
+// Card details (type, mana cost, image) for rendering decklists. Public like
+// the decklists themselves, so it's bounded: capped batch size and name
+// length, and a per-visitor request limit.
+const cardRequestLog = new Map();
+app.post('/api/cards', async (req, res) => {
+  const now = Date.now();
+  const recent = (cardRequestLog.get(req.ip) ?? []).filter((t) => now - t < 60_000);
+  if (recent.length >= 60) return res.status(429).json({ error: 'rate_limited' });
+  recent.push(now);
+  cardRequestLog.set(req.ip, recent);
+  if (cardRequestLog.size > 5000) cardRequestLog.clear();
+
+  const { names } = req.body ?? {};
+  if (
+    !Array.isArray(names) ||
+    names.length === 0 ||
+    names.length > 120 ||
+    names.some((n) => typeof n !== 'string' || n.length === 0 || n.length > 120)
+  ) {
+    return res.status(400).json({ error: 'invalid_body' });
+  }
+  res.json(await lookupCards(names));
 });
 
 app.get('/api/decklists', async (req, res) => {
