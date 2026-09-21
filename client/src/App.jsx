@@ -6,7 +6,13 @@ import { cardKey } from './decklist.js'
 const SERVER_URL = import.meta.env.VITE_SERVER_URL || ''
 const SEATS = ['pioneer', 'modern', 'standard']
 const SEAT_LABELS = { pioneer: 'Pioneer', modern: 'Modern', standard: 'Standard' }
-const TAB_IDS = ['home', 'myteam', 'pairings', 'standings', 'teams', 'decklists', 'roster', 'rules', 'admin']
+const TAB_IDS = ['home', 'myteam', 'pairings', 'standings', 'teams', 'decklists', 'roster', 'halloffame', 'rules', 'admin']
+
+const HALL_OF_FAME = [
+  { season: 3, champion: 'Curve Fillers', members: ['Neil Estrada', 'Liam Etelson', 'Zev Goldhaber-Gordon'] },
+  { season: 2, champion: 'Frank Kaner', handle: '@_adlai' },
+  { season: 1, champion: 'Julian Weiswasser', handle: '@selfcongrats' },
+]
 
 const tabFromHash = () => {
   const id = window.location.hash.replace('#', '')
@@ -727,6 +733,7 @@ function App() {
     { id: 'teams', label: 'Teams' },
     { id: 'decklists', label: 'Decklists' },
     { id: 'roster', label: 'Roster' },
+    { id: 'halloffame', label: 'Hall of Fame' },
     { id: 'rules', label: 'Rules' },
     ...(user?.isAdmin ? [{ id: 'admin', label: 'Admin' }] : []),
   ]
@@ -963,6 +970,20 @@ function App() {
       <button className="secondary-btn save-btn" disabled={decklistSaving} onClick={handleSaveDecklist}>
         {decklistSaving ? 'Saving...' : 'Save Decklist'}
       </button>
+
+      <h3 className="sub-heading">Submitted decklist</h3>
+      {user.decklist?.trim() ? (
+        <>
+          {decklistDraft !== user.decklist && (
+            <p className="muted small">You have unsaved changes — save to update this preview.</p>
+          )}
+          <div className="deck-panel">
+            <DeckView text={user.decklist} cardInfo={cardInfo} ensureCards={ensureCards} />
+          </div>
+        </>
+      ) : (
+        <p className="muted small">Nothing submitted yet. Save a decklist above and a formatted preview will appear here.</p>
+      )}
     </section>
   )
 
@@ -1478,6 +1499,35 @@ function App() {
     </>
   )
 
+  // ---------- Hall of Fame ----------
+
+  const renderHallOfFame = () => (
+    <>
+      <div className="page-head">
+        <h2>Hall of Fame</h2>
+      </div>
+      <div className="hof-grid">
+        {HALL_OF_FAME.map((entry) => (
+          <section key={entry.season} className="panel hof-card">
+            <div className="hof-trophy" aria-hidden="true">
+              🏆
+            </div>
+            <div className="hof-season">Season {entry.season}</div>
+            <div className="hof-name">{entry.champion}</div>
+            {entry.handle && <div className="hof-handle">{entry.handle}</div>}
+            {entry.members && (
+              <ul className="hof-members">
+                {entry.members.map((member) => (
+                  <li key={member}>{member}</li>
+                ))}
+              </ul>
+            )}
+          </section>
+        ))}
+      </div>
+    </>
+  )
+
   // ---------- Rules ----------
 
   const renderRules = () => (
@@ -1620,6 +1670,7 @@ function App() {
     teams: renderTeams,
     decklists: renderDecklists,
     roster: renderRoster,
+    halloffame: renderHallOfFame,
     rules: renderRules,
     admin: renderAdmin,
   }
