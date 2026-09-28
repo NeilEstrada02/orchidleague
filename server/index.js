@@ -66,7 +66,9 @@ import {
   sendNewRoundAnnouncement,
   ensureLeagueRole,
   isDiscordBotConfigured,
+  createThread,
 } from './discordBot.js';
+import { getRoundThreadId, setRoundThreadId } from './threadStore.js';
 
 dotenv.config();
 
@@ -169,6 +171,23 @@ async function getUnreportedMatches(round) {
   return { matches, teamCount };
 }
 
+// Every automated ping for a round (its announcement, its result reminders)
+// goes into one thread per round instead of the bare channel, so a season's
+// worth of pings doesn't pile up in #league-announcements. The thread is
+// created once and reused -- reminders that fire before the round's own
+// announcement (e.g. a decklist reminder for the round that hasn't started
+// yet) create it early, and the announcement later reuses the same one.
+// Falls back to the channel itself if thread creation fails for any reason.
+async function ensureRoundThread(roundNumber, label, firstRound) {
+  const existing = await getRoundThreadId(roundNumber);
+  if (existing) return existing;
+  const start = getRoundStartTime(roundNumber, firstRound);
+  const dateLabel = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' });
+  const threadId = await createThread(REMINDER_CHANNEL_ID, `${label ?? `Round ${roundNumber}`} — week of ${dateLabel}`);
+  if (threadId) await setRoundThreadId(roundNumber, threadId);
+  return threadId ?? REMINDER_CHANNEL_ID;
+}
+
 // Pings the league role once when a round is generated on its schedule.
 // Only a round created at/after its own scheduled start (i.e. by the
 // automatic advance) and still fresh qualifies, so an admin starting a round
@@ -187,10 +206,11 @@ async function checkNewRoundAnnouncement() {
     if (createdMs < scheduledMs || Date.now() - createdMs > 30 * 60 * 1000) return;
     if (!(await claimReminder(round.number, 'announce'))) return;
 
+    const threadId = await ensureRoundThread(round.number, round.label, firstRound);
     const roleId = await ensureLeagueRole();
     const result = roleId
       ? await sendNewRoundAnnouncement(
-          REMINDER_CHANNEL_ID,
+          threadId,
           roleId,
           round.number,
           CLIENT_URL,
@@ -230,8 +250,9 @@ async function checkResultReminders() {
     if (matches.length === 0) return;
     if (!(await claimReminder(round.number, hours))) return;
 
+    const threadId = await ensureRoundThread(round.number, round.label, firstRound);
     const result = await sendResultReminder(
-      REMINDER_CHANNEL_ID,
+      threadId,
       matches,
       CLIENT_URL,
       deadline,
@@ -817,10 +838,12 @@ app.post('/api/admin/send-decklist-reminder', async (req, res) => {
   const { firstRound } = await getSettings();
   if (!firstRound) return res.status(400).json({ error: 'no_schedule' });
   const rounds = await getRounds();
-  const nextRoundAt = getRoundStartTime(rounds.length + 1, firstRound);
+  const nextRoundNumber = rounds.length + 1;
+  const nextRoundAt = getRoundStartTime(nextRoundNumber, firstRound);
 
+  const threadId = await ensureRoundThread(nextRoundNumber, null, firstRound);
   const result = await sendDecklistReminder(
-    REMINDER_CHANNEL_ID,
+    threadId,
     missing.map((u) => u.id),
     CLIENT_URL,
     nextRoundAt
@@ -854,7 +877,8 @@ app.post('/api/admin/send-result-reminder', async (req, res) => {
   const { firstRound } = await getSettings();
   if (!firstRound) return res.status(400).json({ error: 'no_schedule' });
   const nextRoundAt = getRoundStartTime(round.number + 1, firstRound);
-  const result = await sendResultReminder(REMINDER_CHANNEL_ID, matches, CLIENT_URL, nextRoundAt, null, round.stage === 'playoff');
+  const threadId = await ensureRoundThread(round.number, round.label, firstRound);
+  const result = await sendResultReminder(threadId, matches, CLIENT_URL, nextRoundAt, null, round.stage === 'playoff');
   if (!result.ok) {
     return res.status(502).json({ error: 'send_failed' });
   }

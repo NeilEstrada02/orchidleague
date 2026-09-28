@@ -230,6 +230,30 @@ export async function sendNewRoundAnnouncement(channelId, roleId, roundNumber, s
   return sendChannelMessage(channelId, content, [], [roleId]);
 }
 
+// Starts a new public thread in a channel (not attached to any message), so
+// a week's worth of automated pings can live in their own thread instead of
+// piling up in the channel itself. Threads left idle auto-archive after 7
+// days, but every new message in one resets that timer.
+export async function createThread(channelId, name) {
+  if (!botConfigured()) return null;
+  try {
+    const res = await discordFetch(`${DISCORD_API}/channels/${channelId}/threads`, {
+      method: 'POST',
+      headers: botHeaders(),
+      body: JSON.stringify({ name: name.slice(0, 100), auto_archive_duration: 10080, type: 11 }),
+    });
+    if (!res.ok) {
+      console.error('Failed to create Discord thread:', res.status, await res.text());
+      return null;
+    }
+    const thread = await res.json();
+    return thread.id;
+  } catch (err) {
+    console.error('Failed to create Discord thread:', err);
+    return null;
+  }
+}
+
 export function isDiscordBotConfigured() {
   return botConfigured();
 }
