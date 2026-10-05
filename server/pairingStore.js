@@ -54,29 +54,104 @@ function buildByeHistory(rounds) {
   return set;
 }
 
-// Randomized search for a zero-rematch pairing of an even-length group.
-// Falls back to the attempt with the fewest rematches if none is found clean.
-function pairGroupNoRematch(teamIds, rematchSet, attempts = 300) {
-  if (teamIds.length === 0) return [];
-  let best = null;
-  let bestRematches = Infinity;
-  for (let attempt = 0; attempt < attempts; attempt++) {
-    const shuffled = shuffle(teamIds);
-    const pairs = [];
-    let rematches = 0;
-    for (let i = 0; i < shuffled.length; i += 2) {
-      const a = shuffled[i];
-      const b = shuffled[i + 1];
-      pairs.push([a, b]);
-      if (rematchSet.has(pairKey(a, b))) rematches++;
+// A rematch outweighs any possible score-gap cost, so avoiding one always wins.
+const REMATCH_PENALTY = 1_000_000;
+// Keeps a very large or very constrained field from searching forever; the
+// best pairing found by then is still a complete, valid one.
+const SEARCH_NODE_LIMIT = 300_000;
+
+// Pairs an even-length list of teams, minimizing -- in this order -- the
+// number of rematches, then the total squared win-gap between opponents. The
+// second part keeps teams in their own score group when it can and floats
+// them down by as little as possible when it can't, so a group whose only
+// pairing would be a rematch (say, the two unbeaten teams who already met)
+// pairs down instead of repeating a match. Ties between equally good
+// pairings are broken randomly.
+function bestPairing(ids, winsById, rematchSet) {
+  // Shuffle first (random tie-break), then order by wins so the search starts
+  // from the top of the standings.
+  const order = shuffle(ids).sort((a, b) => winsById.get(b) - winsById.get(a));
+  const n = order.length;
+  const cost = order.map((a) =>
+    order.map((b) => {
+      const gap = winsById.get(a) - winsById.get(b);
+      return gap * gap + (rematchSet.has(pairKey(a, b)) ? REMATCH_PENALTY : 0);
+    })
+  );
+
+  let best = Infinity;
+  let bestPairs = null;
+  let nodes = 0;
+  const used = new Array(n).fill(false);
+  const current = [];
+
+  function search(runningCost) {
+    if (++nodes > SEARCH_NODE_LIMIT && bestPairs) return;
+    const i = used.indexOf(false);
+    if (i === -1) {
+      best = runningCost;
+      bestPairs = current.map(([x, y]) => [x, y]);
+      return;
     }
-    if (rematches === 0) return pairs;
-    if (rematches < bestRematches) {
-      bestRematches = rematches;
-      best = pairs;
+    used[i] = true;
+    const candidates = [];
+    for (let j = i + 1; j < n; j++) if (!used[j]) candidates.push(j);
+    candidates.sort((x, y) => cost[i][x] - cost[i][y]);
+    for (const j of candidates) {
+      const total = runningCost + cost[i][j];
+      if (total >= best) continue;
+      used[j] = true;
+      current.push([i, j]);
+      search(total);
+      current.pop();
+      used[j] = false;
+    }
+    used[i] = false;
+  }
+  search(0);
+
+  const pairs = bestPairs.map(([x, y]) => [order[x], order[y]]);
+  const rematches = pairs.filter(([a, b]) => rematchSet.has(pairKey(a, b))).length;
+  return { pairs, rematches };
+}
+
+// Decides who plays whom for the next Swiss round. teams: [{ captainId, wins }].
+// rounds: every round so far (playoffs are ignored). Returns
+// { pairs: [[a, b], ...], byeId, rematches }.
+//
+// With an odd field, the bye goes to the lowest-scoring team that hasn't had
+// one (random among equals) -- unless that would force a rematch somewhere
+// else and a different team's bye wouldn't, in which case the next-lowest
+// candidate gets it. options.byeTeamId fixes the bye recipient.
+export function computePairings(teams, rounds, { byeTeamId = null } = {}) {
+  const rematchSet = buildRematchSet(rounds);
+  const byeHistory = buildByeHistory(rounds);
+  const winsById = new Map(teams.map((t) => [t.captainId, t.wins ?? 0]));
+  const ids = teams.map((t) => t.captainId);
+
+  let byeCandidates = [null];
+  if (ids.length % 2 === 1) {
+    if (byeTeamId) {
+      byeCandidates = [byeTeamId];
+    } else {
+      const lowestFirst = shuffle(ids).sort((a, b) => winsById.get(a) - winsById.get(b));
+      const withoutBye = lowestFirst.filter((id) => !byeHistory.has(id));
+      byeCandidates = withoutBye.length > 0 ? withoutBye : lowestFirst;
     }
   }
-  return best;
+
+  let chosen = null;
+  for (const byeId of byeCandidates) {
+    const result = bestPairing(ids.filter((id) => id !== byeId), winsById, rematchSet);
+    if (!chosen || result.rematches < chosen.rematches) chosen = { ...result, byeId };
+    if (result.rematches === 0) break;
+  }
+
+  // Top tables first; which side is "A" is a coin flip.
+  const pairs = chosen.pairs
+    .map(([a, b]) => (Math.random() < 0.5 ? [a, b] : [b, a]))
+    .sort((p, q) => winsById.get(q[0]) + winsById.get(q[1]) - (winsById.get(p[0]) + winsById.get(p[1])));
+  return { pairs, byeId: chosen.byeId, rematches: chosen.rematches };
 }
 
 export async function getRounds() {
@@ -246,8 +321,6 @@ function snapshotDecklists(team, decklistsById) {
 // decklistsById: Map<userId, string>
 export async function generateNextRound(eligibleTeams, decklistsById = new Map()) {
   const rounds = await loadRounds();
-  const rematchSet = buildRematchSet(rounds);
-  const byeHistory = buildByeHistory(rounds);
   const roundNumber = rounds.length + 1;
 
   // Snapshot each team's current seat assignments AND each player's current
@@ -256,67 +329,28 @@ export async function generateNextRound(eligibleTeams, decklistsById = new Map()
   // it was when it was created.
   const seatsById = new Map(eligibleTeams.map((t) => [t.captainId, t.seats ?? BLANK_SEATS]));
   const teamsById = new Map(eligibleTeams.map((t) => [t.captainId, t]));
-  const winsById = new Map(eligibleTeams.map((t) => [t.captainId, t.wins ?? 0]));
-  let pool = shuffle(eligibleTeams.map((t) => t.captainId));
-  pool.sort((a, b) => winsById.get(b) - winsById.get(a));
+  const { pairs, byeId } = computePairings(eligibleTeams, rounds);
 
-  let byeTeam = null;
-  if (pool.length % 2 === 1) {
-    for (let i = pool.length - 1; i >= 0; i--) {
-      if (!byeHistory.has(pool[i])) {
-        byeTeam = pool[i];
-        break;
-      }
-    }
-    if (!byeTeam) byeTeam = pool[pool.length - 1];
-    pool = pool.filter((id) => id !== byeTeam);
-  }
+  const pairings = pairs.map(([a, b]) => ({
+    teamA: a,
+    teamB: b,
+    result: null,
+    reportedBy: null,
+    seatsSnapshot: { teamA: seatsById.get(a), teamB: seatsById.get(b) },
+    decklistsSnapshot: {
+      teamA: snapshotDecklists(teamsById.get(a), decklistsById),
+      teamB: snapshotDecklists(teamsById.get(b), decklistsById),
+    },
+  }));
 
-  const groups = [];
-  let i = 0;
-  while (i < pool.length) {
-    const w = winsById.get(pool[i]);
-    const group = [];
-    while (i < pool.length && winsById.get(pool[i]) === w) {
-      group.push(pool[i]);
-      i++;
-    }
-    groups.push(group);
-  }
-
-  const pairings = [];
-  let carryDown = [];
-  for (const group of groups) {
-    const current = [...carryDown, ...group];
-    carryDown = [];
-    if (current.length % 2 === 1) {
-      carryDown = [current.pop()];
-    }
-    const pairs = pairGroupNoRematch(current, rematchSet) ?? [];
-    for (const [a, b] of pairs) {
-      pairings.push({
-        teamA: a,
-        teamB: b,
-        result: null,
-        reportedBy: null,
-        seatsSnapshot: { teamA: seatsById.get(a), teamB: seatsById.get(b) },
-        decklistsSnapshot: {
-          teamA: snapshotDecklists(teamsById.get(a), decklistsById),
-          teamB: snapshotDecklists(teamsById.get(b), decklistsById),
-        },
-      });
-      rematchSet.add(pairKey(a, b));
-    }
-  }
-
-  if (byeTeam) {
+  if (byeId) {
     pairings.push({
-      teamA: byeTeam,
+      teamA: byeId,
       teamB: null,
       result: 'A',
       reportedBy: null,
-      seatsSnapshot: { teamA: seatsById.get(byeTeam), teamB: null },
-      decklistsSnapshot: { teamA: snapshotDecklists(teamsById.get(byeTeam), decklistsById), teamB: null },
+      seatsSnapshot: { teamA: seatsById.get(byeId), teamB: null },
+      decklistsSnapshot: { teamA: snapshotDecklists(teamsById.get(byeId), decklistsById), teamB: null },
     });
   }
 

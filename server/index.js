@@ -490,7 +490,15 @@ app.get('/api/settings', async (req, res) => {
   const rounds = await getRounds();
   const nextRoundAt = settings.firstRound ? getRoundStartTime(rounds.length + 1, settings.firstRound).toISOString() : null;
   res.json({
-    settings: { ...settings, nextRoundAt, discordBotConfigured: isDiscordBotConfigured(), autoRemindersActive },
+    settings: {
+      ...settings,
+      nextRoundAt,
+      discordBotConfigured: isDiscordBotConfigured(),
+      autoRemindersActive,
+      // The commit this server is running (Render sets it), so a server-only
+      // deploy can be confirmed from outside.
+      version: process.env.RENDER_GIT_COMMIT ? process.env.RENDER_GIT_COMMIT.slice(0, 7) : null,
+    },
   });
 });
 
