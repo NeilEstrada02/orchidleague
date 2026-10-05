@@ -579,6 +579,8 @@ const ACTION_LABELS = {
   hall_of_fame_remove: 'Removed a Hall of Fame entry',
   create_backup: 'Made a backup',
   restore_backup: 'Restored a backup',
+  repair_round: 'Re-paired the open round',
+  sync_eliminated_roles: 'Updated Discord roles for eliminated teams',
 }
 
 export function BackupsPanel({ notify, refresh }) {

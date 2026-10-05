@@ -88,7 +88,8 @@ export async function removeRoleFromMember(discordUserId) {
       `${DISCORD_API}/guilds/${process.env.DISCORD_GUILD_ID}/members/${discordUserId}/roles/${roleId}`,
       { method: 'DELETE', headers: botHeaders() }
     );
-    if (!res.ok) {
+    // 404 means they've left the server, so there's no role left to remove.
+    if (!res.ok && res.status !== 404) {
       console.error(`Failed to remove Discord role from ${discordUserId}:`, res.status, await res.text());
       return false;
     }

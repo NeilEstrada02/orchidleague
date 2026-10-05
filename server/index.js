@@ -69,6 +69,7 @@ import {
   createThread,
 } from './discordBot.js';
 import { getRoundThreadId, setRoundThreadId } from './threadStore.js';
+import { syncEliminatedRoles } from './eliminationRoles.js';
 
 dotenv.config();
 
@@ -113,6 +114,13 @@ app.use(
   })
 );
 
+// Takes the league role away from players on eliminated teams (and gives it
+// back if a correction un-eliminates them). Runs in the background after
+// anything that can change standings, so it never delays a response.
+const queueRoleSync = () => {
+  syncEliminatedRoles().catch((err) => console.error('Eliminated-role sync failed:', err));
+};
+
 // Advances rounds automatically on schedule. It runs on the production timer
 // (every minute) and also on every incoming request (fired in the background,
 // never blocking the response) as a fallback, so a scheduled boundary is
@@ -140,6 +148,7 @@ async function maybeAutoAdvance() {
         backedUp = true;
       }
       const result = await advanceRound();
+      queueRoleSync();
       if (!result.advanced) break;
       currentCount++;
     }
@@ -194,6 +203,7 @@ async function ensureRoundThread(roundNumber, label, firstRound) {
 // early by hand never pings everyone. Claimed atomically in Redis so it can
 // never go out twice; if the send fails it's released and retried next tick.
 let announceInProgress = false;
+let roleSyncTick = 0;
 async function checkNewRoundAnnouncement() {
   if (announceInProgress || !isDiscordBotConfigured()) return;
   announceInProgress = true;
@@ -805,6 +815,7 @@ app.post('/api/admin/reset-standings', async (req, res) => {
   if (!admin) return;
   await createBackup('pre-reset');
   await resetSeasonData();
+  queueRoleSync();
   await logAudit(admin, 'reset_standings');
   res.json({ ok: true });
 });
@@ -899,6 +910,7 @@ app.post('/api/pairings/advance', async (req, res) => {
 
   await createBackup('pre-advance', 'manual', { minIntervalMs: 60_000 });
   const result = await advanceRound();
+  queueRoleSync();
   await logAudit(admin, 'advance_round', { advanced: result.advanced, reason: result.reason ?? null, round: result.round?.number ?? null });
   if (!result.advanced) {
     return res.status(400).json({ error: result.reason ?? 'not_enough_teams', roundClosed: result.roundClosed });
@@ -1070,6 +1082,7 @@ app.post('/api/admin/cut', async (req, res) => {
   await createBackup('pre-cut', '', { minIntervalMs: 60_000 });
   await setPlannedCutSize(size);
   const result = await advanceRound();
+  queueRoleSync();
   await logAudit(admin, 'start_cut', { size, started: result.advanced, reason: result.reason ?? null });
   if (!result.advanced) {
     await setPlannedCutSize(null);
@@ -1170,6 +1183,7 @@ app.post('/api/admin/season/end', async (req, res) => {
   if (champion && champion !== 'bracket' && !(await getTeam(champion))) return res.status(400).json({ error: 'team_not_found' });
 
   const result = await endSeason(champion);
+  queueRoleSync();
   await logAudit(admin, 'end_season', { season: result.season, champion: result.champion?.name ?? null });
   res.json({ ok: true, ...result });
 });
@@ -1202,6 +1216,7 @@ app.post('/api/admin/backups/:id/restore', async (req, res) => {
   if (!admin) return;
   const backup = await restoreBackup(req.params.id);
   if (!backup) return res.status(404).json({ error: 'backup_not_found' });
+  queueRoleSync();
   await logAudit(admin, 'restore_backup', { id: backup.id, createdAt: backup.createdAt });
   res.json({ ok: true });
 });
@@ -1227,7 +1242,10 @@ app.post('/api/admin/rounds/result', async (req, res) => {
   await correctionBackup();
   const change = await setPairingResult(roundNumber, pairingId, result);
   if (change.error) return res.status(400).json({ error: change.error });
-  if (change.roundClosed && change.stage === 'swiss') await recomputeTeamRecords();
+  if (change.roundClosed && change.stage === 'swiss') {
+    await recomputeTeamRecords();
+    queueRoleSync();
+  }
   await logAudit(admin, 'set_result', { roundNumber, pairingId, before: change.before, after: change.after });
   res.json({ ok: true });
 });
@@ -1297,6 +1315,8 @@ if (autoRemindersActive) {
     await checkNewRoundAnnouncement().catch((err) => console.error('Round announcement failed:', err));
     await checkResultReminders().catch((err) => console.error('Result reminder check failed:', err));
     await ensureNightlyBackup().catch((err) => console.error('Nightly backup failed:', err));
+    // Safety net for anything the event hooks missed (and retries after a failure).
+    if (++roleSyncTick % 5 === 1) queueRoleSync();
   }, 60 * 1000);
 }
 
