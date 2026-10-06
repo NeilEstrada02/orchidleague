@@ -11,6 +11,8 @@ const DEFAULTS = {
   // Eastern wall-clock date/time of Round 1 (later rounds follow weekly), or
   // null when the season isn't scheduled yet -- rounds then start by hand only.
   firstRound: DEFAULT_FIRST_ROUND,
+  // Extra weeks an admin has given rounds: { [roundNumber]: weeks }.
+  roundExtensions: {},
   // When set (2, 4 or 8), the next automatic round start begins a top cut of
   // that size instead of another Swiss round.
   plannedCutSize: null,
@@ -50,6 +52,24 @@ export async function setSeasonNumber(number) {
 export async function setFirstRound(firstRound) {
   const settings = await getSettings();
   settings.firstRound = firstRound;
+  await redisClient.set(KEY, JSON.stringify(settings));
+  return settings;
+}
+
+// weeks 0 removes the extension.
+export async function setRoundExtension(roundNumber, weeks) {
+  const settings = await getSettings();
+  const next = { ...(settings.roundExtensions ?? {}) };
+  if (weeks > 0) next[roundNumber] = weeks;
+  else delete next[roundNumber];
+  settings.roundExtensions = next;
+  await redisClient.set(KEY, JSON.stringify(settings));
+  return settings;
+}
+
+export async function clearRoundExtensions() {
+  const settings = await getSettings();
+  settings.roundExtensions = {};
   await redisClient.set(KEY, JSON.stringify(settings));
   return settings;
 }

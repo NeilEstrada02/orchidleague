@@ -580,6 +580,7 @@ const ACTION_LABELS = {
   create_backup: 'Made a backup',
   restore_backup: 'Restored a backup',
   repair_round: 'Re-paired the open round',
+  extend_round: "Changed a round's deadline",
   sync_eliminated_roles: 'Updated Discord roles for eliminated teams',
 }
 

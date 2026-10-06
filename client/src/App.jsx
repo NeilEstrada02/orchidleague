@@ -18,6 +18,14 @@ const ADVANCE_ERRORS = {
   invalid_size: 'That top cut size is not valid.',
 }
 
+const EXTEND_ERRORS = {
+  no_schedule: 'Set the season schedule first (Admin → Season).',
+  no_open_round: 'There is no round in progress to extend.',
+  extension_limit: 'A round can be extended by at most 4 weeks.',
+  not_extended: 'This round has no extension to undo.',
+  deadline_in_past: 'That would put the deadline in the past, so the round would end immediately.',
+}
+
 const tabFromHash = () => {
   const id = window.location.hash.replace('#', '')
   return TAB_IDS.includes(id) ? id : 'home'
@@ -50,6 +58,7 @@ function App() {
   const [pairings, setPairings] = useState([])
   const [decklistsData, setDecklistsData] = useState({ round: null, formats: { pioneer: [], modern: [], standard: [] } })
   const [roundBusy, setRoundBusy] = useState(false)
+  const [extendBusy, setExtendBusy] = useState(false)
   const [reportBusyId, setReportBusyId] = useState(null)
   const [resetBusy, setResetBusy] = useState(false)
   const [dummyBusy, setDummyBusy] = useState(false)
@@ -519,6 +528,47 @@ function App() {
       setError('Could not advance the round.')
     } finally {
       setRoundBusy(false)
+    }
+  }
+
+  const handleExtendRound = async (weeks) => {
+    const round = pairings.find((r) => r.status === 'open')
+    if (!round) return
+    const name = roundName(round)
+    const message =
+      weeks > 0
+        ? `Give ${name} one more week? Its deadline moves a week later, every later round starts a week later too, reminders restart against the new deadline, and a note is posted in the round's Discord thread.`
+        : `Take one week back off ${name}? Its deadline (and every later round) moves a week earlier, and a note is posted in the round's Discord thread.`
+    if (!window.confirm(message)) return
+
+    setExtendBusy(true)
+    setError('')
+    try {
+      const res = await fetch(`${SERVER_URL}/api/admin/rounds/extend`, {
+        method: 'POST',
+        credentials: 'include',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ weeks }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) {
+        setNotice('')
+        setError(EXTEND_ERRORS[data.error] ?? 'Could not change the deadline.')
+        return
+      }
+      await refreshAll()
+      const due = new Date(data.deadline).toLocaleString(undefined, {
+        weekday: 'long',
+        month: 'short',
+        day: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit',
+      })
+      setNotice(`${name} is now due ${due}.`)
+    } catch {
+      setError('Could not change the deadline.')
+    } finally {
+      setExtendBusy(false)
     }
   }
 
@@ -1707,9 +1757,37 @@ function App() {
               {advanceRoundLabel}
             </button>
           </div>
+          {openRound && settings.nextRoundAt && (
+            <div className="deadline-row">
+              <div>
+                <strong>{roundName(openRound)}</strong> is due {nextRoundAtLabel}
+                {(settings.roundExtensions?.[openRound.number] ?? 0) > 0 && (
+                  <span className="tag">
+                    Extended {settings.roundExtensions[openRound.number]} week
+                    {settings.roundExtensions[openRound.number] > 1 ? 's' : ''}
+                  </span>
+                )}
+              </div>
+              <div className="admin-actions">
+                <button
+                  className="secondary-btn"
+                  disabled={extendBusy || (settings.roundExtensions?.[openRound.number] ?? 0) >= 4}
+                  onClick={() => handleExtendRound(1)}
+                >
+                  Extend by 1 week
+                </button>
+                {(settings.roundExtensions?.[openRound.number] ?? 0) > 0 && (
+                  <button className="secondary-btn" disabled={extendBusy} onClick={() => handleExtendRound(-1)}>
+                    Undo 1 week
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
           <p className="muted small">
-            Rounds also advance automatically at the scheduled time. Closing signups removes enrolled players who
-            aren't on a team.
+            Rounds also advance automatically at the scheduled time. Extending a round (for a busy week) moves its
+            deadline and every later round out by a week. Closing signups removes enrolled players who aren't on a
+            team.
           </p>
         </section>
 

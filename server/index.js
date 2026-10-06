@@ -29,6 +29,7 @@ import {
   setSeasonNumber,
   setPlannedCutSize,
   setFirstRound,
+  setRoundExtension,
 } from './settingsStore.js';
 import { seedDummyAccounts, clearDummyAccounts } from './dummyAccounts.js';
 import {
@@ -56,7 +57,7 @@ import { getHallOfFame, upsertHallOfFame, removeHallOfFame, listArchives } from 
 import { createBackup, listBackups, getBackup, restoreBackup, ensureNightlyBackup } from './backupStore.js';
 import { logAudit, getAudit } from './auditStore.js';
 import { getRoundStartTime, isValidFirstRound } from './schedule.js';
-import { pickDueReminder, claimReminder, releaseReminder } from './reminderScheduler.js';
+import { pickDueReminder, claimReminder, releaseReminder, REMINDER_HOURS } from './reminderScheduler.js';
 import { lookupCards } from './cardData.js';
 import {
   addRoleToMember,
@@ -64,6 +65,7 @@ import {
   sendDecklistReminder,
   sendResultReminder,
   sendNewRoundAnnouncement,
+  sendDeadlineChangeNote,
   ensureLeagueRole,
   isDiscordBotConfigured,
   createThread,
@@ -132,14 +134,14 @@ async function maybeAutoAdvance() {
   autoAdvanceInProgress = true;
   try {
     // No schedule (a fresh season) means nothing starts on its own.
-    const { firstRound } = await getSettings();
+    const { firstRound, roundExtensions } = await getSettings();
     if (!firstRound) return;
     const rounds = await getRounds();
     let currentCount = rounds.length;
     const now = Date.now();
     let backedUp = false;
 
-    while (getRoundStartTime(currentCount + 1, firstRound).getTime() <= now) {
+    while (getRoundStartTime(currentCount + 1, firstRound, roundExtensions).getTime() <= now) {
       // A snapshot just before a round is closed and the next one built, so a
       // bad advance can be rolled back. Throttled, and only when a round is
       // actually about to change.
@@ -187,10 +189,10 @@ async function getUnreportedMatches(round) {
 // announcement (e.g. a decklist reminder for the round that hasn't started
 // yet) create it early, and the announcement later reuses the same one.
 // Falls back to the channel itself if thread creation fails for any reason.
-async function ensureRoundThread(roundNumber, label, firstRound) {
+async function ensureRoundThread(roundNumber, label, firstRound, roundExtensions) {
   const existing = await getRoundThreadId(roundNumber);
   if (existing) return existing;
-  const start = getRoundStartTime(roundNumber, firstRound);
+  const start = getRoundStartTime(roundNumber, firstRound, roundExtensions);
   const dateLabel = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/New_York' });
   const threadId = await createThread(REMINDER_CHANNEL_ID, `${label ?? `Round ${roundNumber}`} — week of ${dateLabel}`);
   if (threadId) await setRoundThreadId(roundNumber, threadId);
@@ -208,15 +210,15 @@ async function checkNewRoundAnnouncement() {
   if (announceInProgress || !isDiscordBotConfigured()) return;
   announceInProgress = true;
   try {
-    const { firstRound } = await getSettings();
+    const { firstRound, roundExtensions } = await getSettings();
     const round = await getCurrentRound();
     if (!firstRound || !round?.createdAt) return;
     const createdMs = new Date(round.createdAt).getTime();
-    const scheduledMs = getRoundStartTime(round.number, firstRound).getTime();
+    const scheduledMs = getRoundStartTime(round.number, firstRound, roundExtensions).getTime();
     if (createdMs < scheduledMs || Date.now() - createdMs > 30 * 60 * 1000) return;
     if (!(await claimReminder(round.number, 'announce'))) return;
 
-    const threadId = await ensureRoundThread(round.number, round.label, firstRound);
+    const threadId = await ensureRoundThread(round.number, round.label, firstRound, roundExtensions);
     const roleId = await ensureLeagueRole();
     const result = roleId
       ? await sendNewRoundAnnouncement(
@@ -224,7 +226,7 @@ async function checkNewRoundAnnouncement() {
           roleId,
           round.number,
           CLIENT_URL,
-          getRoundStartTime(round.number + 1, firstRound),
+          getRoundStartTime(round.number + 1, firstRound, roundExtensions),
           round.label ?? null,
           round.stage === 'playoff'
         )
@@ -249,10 +251,10 @@ async function checkResultReminders() {
   if (reminderCheckInProgress || !isDiscordBotConfigured()) return;
   reminderCheckInProgress = true;
   try {
-    const { firstRound } = await getSettings();
+    const { firstRound, roundExtensions } = await getSettings();
     const round = await getCurrentRound();
     if (!firstRound || !round) return;
-    const deadline = getRoundStartTime(round.number + 1, firstRound);
+    const deadline = getRoundStartTime(round.number + 1, firstRound, roundExtensions);
     const hours = pickDueReminder(deadline.getTime() - Date.now());
     if (hours === null) return;
 
@@ -260,7 +262,7 @@ async function checkResultReminders() {
     if (matches.length === 0) return;
     if (!(await claimReminder(round.number, hours))) return;
 
-    const threadId = await ensureRoundThread(round.number, round.label, firstRound);
+    const threadId = await ensureRoundThread(round.number, round.label, firstRound, roundExtensions);
     const result = await sendResultReminder(
       threadId,
       matches,
@@ -498,7 +500,9 @@ app.post('/auth/logout', (req, res) => {
 app.get('/api/settings', async (req, res) => {
   const settings = await getSettings();
   const rounds = await getRounds();
-  const nextRoundAt = settings.firstRound ? getRoundStartTime(rounds.length + 1, settings.firstRound).toISOString() : null;
+  const nextRoundAt = settings.firstRound
+    ? getRoundStartTime(rounds.length + 1, settings.firstRound, settings.roundExtensions).toISOString()
+    : null;
   res.json({
     settings: {
       ...settings,
@@ -854,13 +858,13 @@ app.post('/api/admin/send-decklist-reminder', async (req, res) => {
     return res.json({ sent: false, count: 0 });
   }
 
-  const { firstRound } = await getSettings();
+  const { firstRound, roundExtensions } = await getSettings();
   if (!firstRound) return res.status(400).json({ error: 'no_schedule' });
   const rounds = await getRounds();
   const nextRoundNumber = rounds.length + 1;
-  const nextRoundAt = getRoundStartTime(nextRoundNumber, firstRound);
+  const nextRoundAt = getRoundStartTime(nextRoundNumber, firstRound, roundExtensions);
 
-  const threadId = await ensureRoundThread(nextRoundNumber, null, firstRound);
+  const threadId = await ensureRoundThread(nextRoundNumber, null, firstRound, roundExtensions);
   const result = await sendDecklistReminder(
     threadId,
     missing.map((u) => u.id),
@@ -893,10 +897,10 @@ app.post('/api/admin/send-result-reminder', async (req, res) => {
     return res.json({ sent: false, matchCount: 0 });
   }
 
-  const { firstRound } = await getSettings();
+  const { firstRound, roundExtensions } = await getSettings();
   if (!firstRound) return res.status(400).json({ error: 'no_schedule' });
-  const nextRoundAt = getRoundStartTime(round.number + 1, firstRound);
-  const threadId = await ensureRoundThread(round.number, round.label, firstRound);
+  const nextRoundAt = getRoundStartTime(round.number + 1, firstRound, roundExtensions);
+  const threadId = await ensureRoundThread(round.number, round.label, firstRound, roundExtensions);
   const result = await sendResultReminder(threadId, matches, CLIENT_URL, nextRoundAt, null, round.stage === 'playoff');
   if (!result.ok) {
     return res.status(502).json({ error: 'send_failed' });
@@ -1163,7 +1167,8 @@ app.post('/api/admin/season/schedule', async (req, res) => {
   // If the next round's start has already passed under this schedule it would
   // begin at once -- and any other past-due rounds would be closed with losses
   // -- so make the admin confirm that on purpose.
-  const nextStart = getRoundStartTime((await getRounds()).length + 1, firstRound);
+  const { roundExtensions } = await getSettings();
+  const nextStart = getRoundStartTime((await getRounds()).length + 1, firstRound, roundExtensions);
   if (nextStart.getTime() <= Date.now() && confirmPast !== true) {
     return res.status(409).json({ error: 'schedule_in_past' });
   }
@@ -1282,6 +1287,57 @@ app.post('/api/admin/rounds/decklist', async (req, res) => {
   if (change.error) return res.status(400).json({ error: change.error });
   await logAudit(admin, 'set_round_decklist', { roundNumber, pairingId, playerId, ...change });
   res.json({ ok: true });
+});
+
+// Gives the round in progress one more week (weeks: 1) or takes an extension
+// back (weeks: -1). Its deadline moves, and so does the start of every later
+// round; earlier rounds are untouched. Reminders restart against the new
+// deadline, and a no-ping note goes in the round's Discord thread.
+const MAX_EXTENSION_WEEKS = 4;
+app.post('/api/admin/rounds/extend', async (req, res) => {
+  const admin = await requireAdmin(req, res);
+  if (!admin) return;
+  const { weeks } = req.body ?? {};
+  if (weeks !== 1 && weeks !== -1) return res.status(400).json({ error: 'invalid_body' });
+
+  const settings = await getSettings();
+  if (!settings.firstRound) return res.status(400).json({ error: 'no_schedule' });
+  const round = await getCurrentRound();
+  if (!round) return res.status(400).json({ error: 'no_open_round' });
+
+  const current = settings.roundExtensions?.[round.number] ?? 0;
+  const next = current + weeks;
+  if (next < 0) return res.status(400).json({ error: 'not_extended' });
+  if (next > MAX_EXTENSION_WEEKS) return res.status(400).json({ error: 'extension_limit' });
+
+  const proposed = { ...(settings.roundExtensions ?? {}) };
+  if (next > 0) proposed[round.number] = next;
+  else delete proposed[round.number];
+  const oldDeadline = getRoundStartTime(round.number + 1, settings.firstRound, settings.roundExtensions);
+  const newDeadline = getRoundStartTime(round.number + 1, settings.firstRound, proposed);
+  if (newDeadline.getTime() <= Date.now()) return res.status(400).json({ error: 'deadline_in_past' });
+
+  await createBackup('pre-correction', '', { minIntervalMs: 10 * 60 * 1000 });
+  await setRoundExtension(round.number, next);
+  // Reminders already sent were measured against the old deadline.
+  for (const hours of REMINDER_HOURS) await releaseReminder(round.number, hours);
+  await logAudit(admin, 'extend_round', {
+    roundNumber: round.number,
+    extraWeeks: next,
+    oldDeadline: oldDeadline.toISOString(),
+    newDeadline: newDeadline.toISOString(),
+  });
+
+  if (isDiscordBotConfigured()) {
+    try {
+      const threadId = await ensureRoundThread(round.number, round.label, settings.firstRound, settings.roundExtensions);
+      const roundName = round.label ? `Round ${round.number} — ${round.label}` : `Round ${round.number}`;
+      await sendDeadlineChangeNote(threadId, roundName, newDeadline, weeks === 1);
+    } catch (err) {
+      console.error('Could not post the deadline change to Discord:', err);
+    }
+  }
+  res.json({ ok: true, deadline: newDeadline.toISOString(), extraWeeks: next });
 });
 
 // Removes the newest round if it's still open, e.g. one started by mistake.

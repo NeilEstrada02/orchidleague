@@ -11,7 +11,7 @@ import {
   computeClosedRecords,
 } from './pairingStore.js';
 import { getBracket, saveBracket, clearBracket, seedOrder, roundLabel, winnerOf, CUT_SIZES } from './bracketStore.js';
-import { getSettings, setPlannedCutSize, setSeasonNumber, setFirstRound } from './settingsStore.js';
+import { getSettings, setPlannedCutSize, setSeasonNumber, setFirstRound, clearRoundExtensions } from './settingsStore.js';
 import { createBackup } from './backupStore.js';
 import { saveArchive, upsertHallOfFame } from './seasonStore.js';
 
@@ -149,6 +149,7 @@ export async function resetSeasonData() {
   await clearBracket();
   await setPlannedCutSize(null);
   await setFirstRound(null);
+  await clearRoundExtensions();
 }
 
 // Archives the season in full, adds its champion to the Hall of Fame, then

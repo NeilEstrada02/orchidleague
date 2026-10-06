@@ -235,6 +235,16 @@ export async function sendNewRoundAnnouncement(channelId, roleId, roundNumber, s
 // a week's worth of automated pings can live in their own thread instead of
 // piling up in the channel itself. Threads left idle auto-archive after 7
 // days, but every new message in one resets that timer.
+// Tells a round's thread that its deadline moved. Deliberately pings no one:
+// it's a courtesy note, not a call to action.
+export async function sendDeadlineChangeNote(channelId, roundName, deadline, extended) {
+  const unixSeconds = Math.floor(new Date(deadline).getTime() / 1000);
+  const content = extended
+    ? `⏳ **${roundName} has been extended.** The new deadline is <t:${unixSeconds}:F> (<t:${unixSeconds}:R>). Reminders will follow the new deadline.`
+    : `⏳ **${roundName}'s deadline has moved back.** The new deadline is <t:${unixSeconds}:F> (<t:${unixSeconds}:R>).`;
+  return sendChannelMessage(channelId, content);
+}
+
 export async function createThread(channelId, name) {
   if (!botConfigured()) return null;
   try {

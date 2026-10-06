@@ -48,8 +48,12 @@ function zonedTimeToUtc(y, m, d, hh, mm, timeZone) {
 // Eastern wall-clock time. Recomputed per-round from the calendar date
 // (never by adding milliseconds to a prior UTC instant) so a DST
 // transition mid-season keeps 11:59pm Eastern fixed instead of drifting.
-export function getRoundStartTime(roundNumber, firstRound) {
-  const weeksToAdd = roundNumber - 1;
+// extensions: { [roundNumber]: extraWeeks } -- an admin giving a round more time
+// pushes the start of every LATER round out by that many weeks.
+export function getRoundStartTime(roundNumber, firstRound, extensions = {}) {
+  let extraWeeks = 0;
+  for (const [round, weeks] of Object.entries(extensions)) if (Number(round) < roundNumber) extraWeeks += weeks;
+  const weeksToAdd = roundNumber - 1 + extraWeeks;
   const scratch = new Date(Date.UTC(firstRound.year, firstRound.month - 1, firstRound.day));
   scratch.setUTCDate(scratch.getUTCDate() + weeksToAdd * 7);
   return zonedTimeToUtc(

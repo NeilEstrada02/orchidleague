@@ -1444,3 +1444,24 @@
   font-family: ui-monospace, Consolas, monospace;
   font-size: 0.72rem !important;
 }
+
+/* ---------- Deadline control ---------- */
+
+.deadline-row {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  background: var(--bg-inset);
+  border-radius: 8px;
+  padding: 0.7rem 0.85rem;
+  margin: 0.2rem 0 0.9rem;
+  font-size: 0.9rem;
+}
+
+.deadline-row .admin-actions {
+  margin-bottom: 0;
+}
+
+.deadline-row .tag {
+  white-space: nowrap;
+}
