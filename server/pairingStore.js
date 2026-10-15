@@ -1,10 +1,11 @@
-import { redisClient } from './redis.js';
+import { cachedGet, freshGet, cachedSet } from './cache.js';
 
 const KEY = 'orchid:rounds';
 const BLANK_SEATS = { pioneer: null, modern: null, standard: null };
 
-async function loadRounds() {
-  const raw = await redisClient.get(KEY);
+// Readers use the short-lived cache; anything that modifies rounds reads fresh.
+async function loadRounds(fresh = false) {
+  const raw = fresh ? await freshGet(KEY) : await cachedGet(KEY);
   if (!raw) return [];
   try {
     return JSON.parse(raw);
@@ -14,7 +15,7 @@ async function loadRounds() {
 }
 
 async function saveRounds(rounds) {
-  await redisClient.set(KEY, JSON.stringify(rounds));
+  await cachedSet(KEY, JSON.stringify(rounds));
 }
 
 function pairKey(a, b) {
@@ -238,7 +239,7 @@ export async function resetRounds() {
 // applied, so the round's matchups freeze at "how things stood right before
 // this swap" instead of continuing to track live seats indefinitely.
 export async function backfillCurrentRoundSeats(seatsByCaptainId) {
-  const rounds = await loadRounds();
+  const rounds = await loadRounds(true);
   const round = rounds[rounds.length - 1];
   if (!round || round.status !== 'open') return false;
   let changed = false;
@@ -267,7 +268,7 @@ export async function getCurrentRound() {
 // In a playoff round nothing counts toward Swiss records, and a match nobody
 // reported goes to the higher seed (a bracket can't have two losers).
 export async function closeCurrentRound() {
-  const rounds = await loadRounds();
+  const rounds = await loadRounds(true);
   const round = rounds[rounds.length - 1];
   if (!round || round.status !== 'open') return { deltas: [], closed: false };
 
@@ -320,7 +321,7 @@ function snapshotDecklists(team, decklistsById) {
 // eligibleTeams: [{ captainId, wins, seats, memberIds }]
 // decklistsById: Map<userId, string>
 export async function generateNextRound(eligibleTeams, decklistsById = new Map()) {
-  const rounds = await loadRounds();
+  const rounds = await loadRounds(true);
   const roundNumber = rounds.length + 1;
 
   // Snapshot each team's current seat assignments AND each player's current
@@ -368,7 +369,7 @@ export async function generateNextRound(eligibleTeams, decklistsById = new Map()
 }
 
 export async function reportResult(pairingId, teamCaptainId, outcome) {
-  const rounds = await loadRounds();
+  const rounds = await loadRounds(true);
   const round = rounds[rounds.length - 1];
   if (!round || round.status !== 'open') return null;
   const pairing = round.pairings.find((p) => p.id === pairingId);
@@ -388,7 +389,7 @@ export async function reportResult(pairingId, teamCaptainId, outcome) {
 // seats }), team A being the higher seed. Snapshots seats and decklists just
 // like a Swiss round, so playoff matchups stay fixed once posted.
 export async function generatePlayoffRound(matches, label, decklistsById = new Map()) {
-  const rounds = await loadRounds();
+  const rounds = await loadRounds(true);
   const roundNumber = rounds.length + 1;
   const pairings = matches.map((m, idx) => ({
     id: `r${roundNumber}-${idx + 1}`,
@@ -455,7 +456,7 @@ function findPairing(rounds, roundNumber, pairingId) {
 // can only be changed while their round is open, since the next round is built
 // from them.
 export async function setPairingResult(roundNumber, pairingId, result) {
-  const rounds = await loadRounds();
+  const rounds = await loadRounds(true);
   const found = findPairing(rounds, roundNumber, pairingId);
   if (found.error) return found;
   const { round, pairing } = found;
@@ -477,7 +478,7 @@ export async function setPairingResult(roundNumber, pairingId, result) {
 // Swaps two players' formats within one team's lineup for a round. Decklists
 // are stored per player, so they follow the player automatically.
 export async function swapSnapshotSeats(roundNumber, pairingId, side, seatA, seatB) {
-  const rounds = await loadRounds();
+  const rounds = await loadRounds(true);
   const found = findPairing(rounds, roundNumber, pairingId);
   if (found.error) return found;
   const lineup = found.pairing.seatsSnapshot?.[side === 'B' ? 'teamB' : 'teamA'];
@@ -492,7 +493,7 @@ export async function swapSnapshotSeats(roundNumber, pairingId, side, seatA, sea
 
 // Replaces the decklist locked in for one player in one round.
 export async function setSnapshotDecklist(roundNumber, pairingId, playerId, text) {
-  const rounds = await loadRounds();
+  const rounds = await loadRounds(true);
   const found = findPairing(rounds, roundNumber, pairingId);
   if (found.error) return found;
   const side = ['teamA', 'teamB'].find((s) => found.pairing.decklistsSnapshot?.[s] && playerId in found.pairing.decklistsSnapshot[s]);
@@ -507,7 +508,7 @@ export async function setSnapshotDecklist(roundNumber, pairingId, playerId, text
 // Removes the newest round if it's still open (e.g. started by mistake). Team
 // records are untouched because an open round hasn't been applied to them.
 export async function undoOpenRound() {
-  const rounds = await loadRounds();
+  const rounds = await loadRounds(true);
   const last = rounds[rounds.length - 1];
   if (!last) return { error: 'no_rounds' };
   if (last.status !== 'open') return { error: 'round_already_closed' };

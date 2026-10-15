@@ -1,4 +1,4 @@
-import { redisClient } from './redis.js';
+import { cachedGet, freshGet, cachedSet } from './cache.js';
 import { DEFAULT_FIRST_ROUND } from './schedule.js';
 
 const KEY = 'orchid:settings';
@@ -18,8 +18,9 @@ const DEFAULTS = {
   plannedCutSize: null,
 };
 
-export async function getSettings() {
-  const raw = await redisClient.get(KEY);
+// Readers use the short-lived cache; setters read fresh.
+async function readSettings(fresh) {
+  const raw = fresh ? await freshGet(KEY) : await cachedGet(KEY);
   if (!raw) return { ...DEFAULTS };
   try {
     return { ...DEFAULTS, ...JSON.parse(raw) };
@@ -28,63 +29,67 @@ export async function getSettings() {
   }
 }
 
+export async function getSettings() {
+  return readSettings(false);
+}
+
 export async function setSignupsOpen(open) {
-  const settings = await getSettings();
+  const settings = await readSettings(true);
   settings.signupsOpen = open;
-  await redisClient.set(KEY, JSON.stringify(settings));
+  await cachedSet(KEY, JSON.stringify(settings));
   return settings;
 }
 
 export async function setDummyAccountsEnabled(enabled) {
-  const settings = await getSettings();
+  const settings = await readSettings(true);
   settings.dummyAccountsEnabled = enabled;
-  await redisClient.set(KEY, JSON.stringify(settings));
+  await cachedSet(KEY, JSON.stringify(settings));
   return settings;
 }
 
 export async function setSeasonNumber(number) {
-  const settings = await getSettings();
+  const settings = await readSettings(true);
   settings.seasonNumber = number;
-  await redisClient.set(KEY, JSON.stringify(settings));
+  await cachedSet(KEY, JSON.stringify(settings));
   return settings;
 }
 
 export async function setFirstRound(firstRound) {
-  const settings = await getSettings();
+  const settings = await readSettings(true);
   settings.firstRound = firstRound;
-  await redisClient.set(KEY, JSON.stringify(settings));
+  await cachedSet(KEY, JSON.stringify(settings));
   return settings;
 }
 
 // weeks 0 removes the extension.
 export async function setRoundExtension(roundNumber, weeks) {
-  const settings = await getSettings();
+  const settings = await readSettings(true);
   const next = { ...(settings.roundExtensions ?? {}) };
   if (weeks > 0) next[roundNumber] = weeks;
   else delete next[roundNumber];
   settings.roundExtensions = next;
-  await redisClient.set(KEY, JSON.stringify(settings));
+  await cachedSet(KEY, JSON.stringify(settings));
   return settings;
 }
 
 export async function clearRoundExtensions() {
-  const settings = await getSettings();
+  const settings = await readSettings(true);
   settings.roundExtensions = {};
-  await redisClient.set(KEY, JSON.stringify(settings));
+  await cachedSet(KEY, JSON.stringify(settings));
   return settings;
 }
 
 export async function setPlannedCutSize(size) {
-  const settings = await getSettings();
+  const settings = await readSettings(true);
   settings.plannedCutSize = size;
-  await redisClient.set(KEY, JSON.stringify(settings));
+  await cachedSet(KEY, JSON.stringify(settings));
   return settings;
 }
 
 export async function setDiscordRoleId(roleId) {
-  const settings = await getSettings();
+  const settings = await readSettings(true);
   settings.discordRoleId = roleId;
-  await redisClient.set(KEY, JSON.stringify(settings));
+  await cachedSet(KEY, JSON.stringify(settings));
   return settings;
 }
 

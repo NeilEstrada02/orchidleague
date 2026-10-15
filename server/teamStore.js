@@ -1,11 +1,12 @@
-import { redisClient } from './redis.js';
+import { cachedGet, freshGet, cachedSet } from './cache.js';
 
 const KEY = 'orchid:teams';
 
 export const SEATS = ['pioneer', 'modern', 'standard'];
 
-async function loadTeams() {
-  const raw = await redisClient.get(KEY);
+// Readers use the short-lived cache; anything that modifies teams reads fresh.
+async function loadTeams(fresh = false) {
+  const raw = fresh ? await freshGet(KEY) : await cachedGet(KEY);
   if (!raw) return {};
   try {
     return JSON.parse(raw);
@@ -15,7 +16,7 @@ async function loadTeams() {
 }
 
 async function saveTeams(teams) {
-  await redisClient.set(KEY, JSON.stringify(teams));
+  await cachedSet(KEY, JSON.stringify(teams));
 }
 
 function blankTeam(captainId) {
@@ -59,23 +60,29 @@ function applyDefaultSeatsIfNeeded(team) {
   return changed;
 }
 
+// Reading a team can also repair its seats; that write only happens (from a
+// fresh copy) when the cached copy actually needs it.
 export async function getTeam(captainId) {
-  const teams = await loadTeams();
-  const team = teams[captainId] ?? null;
-  if (team && applyDefaultSeatsIfNeeded(team)) {
-    teams[captainId] = team;
-    await saveTeams(teams);
+  let teams = await loadTeams();
+  let team = teams[captainId] ?? null;
+  if (team && applyDefaultSeatsIfNeeded(structuredClone(team))) {
+    teams = await loadTeams(true);
+    team = teams[captainId] ?? null;
+    if (team && applyDefaultSeatsIfNeeded(team)) await saveTeams(teams);
   }
   return team;
 }
 
 export async function getAllTeams() {
-  const teams = await loadTeams();
-  let changed = false;
-  for (const team of Object.values(teams)) {
-    if (applyDefaultSeatsIfNeeded(team)) changed = true;
+  let teams = await loadTeams();
+  if (Object.values(teams).some((team) => applyDefaultSeatsIfNeeded(structuredClone(team)))) {
+    teams = await loadTeams(true);
+    let changed = false;
+    for (const team of Object.values(teams)) {
+      if (applyDefaultSeatsIfNeeded(team)) changed = true;
+    }
+    if (changed) await saveTeams(teams);
   }
-  if (changed) await saveTeams(teams);
   return Object.values(teams);
 }
 
@@ -85,7 +92,7 @@ export async function isMemberOfAnyTeam(userId) {
 }
 
 export async function ensureTeam(captainId) {
-  const teams = await loadTeams();
+  const teams = await loadTeams(true);
   if (!teams[captainId]) {
     teams[captainId] = blankTeam(captainId);
     await saveTeams(teams);
@@ -94,7 +101,7 @@ export async function ensureTeam(captainId) {
 }
 
 export async function setTeamInfo(captainId, { teamName, charity }) {
-  const teams = await loadTeams();
+  const teams = await loadTeams(true);
   const team = teams[captainId] ?? blankTeam(captainId);
   team.teamName = teamName;
   team.charity = charity;
@@ -105,7 +112,7 @@ export async function setTeamInfo(captainId, { teamName, charity }) {
 }
 
 export async function addMember(captainId, memberId) {
-  const teams = await loadTeams();
+  const teams = await loadTeams(true);
   const team = teams[captainId] ?? blankTeam(captainId);
   if (!team.memberIds.includes(memberId)) {
     if (team.memberIds.length >= 2) return null;
@@ -119,7 +126,7 @@ export async function addMember(captainId, memberId) {
 }
 
 export async function removeMember(captainId, memberId) {
-  const teams = await loadTeams();
+  const teams = await loadTeams(true);
   const team = teams[captainId];
   if (!team) return null;
   team.memberIds = team.memberIds.filter((id) => id !== memberId);
@@ -133,7 +140,7 @@ export async function removeMember(captainId, memberId) {
 }
 
 export async function setPaid(captainId, paid) {
-  const teams = await loadTeams();
+  const teams = await loadTeams(true);
   const team = teams[captainId];
   if (!team) return null;
   team.paid = paid;
@@ -143,7 +150,7 @@ export async function setPaid(captainId, paid) {
 }
 
 export async function swapSeats(captainId, seatA, seatB) {
-  const teams = await loadTeams();
+  const teams = await loadTeams(true);
   const team = teams[captainId];
   if (!team) return null;
   const seats = ensureSeats(team);
@@ -156,7 +163,7 @@ export async function swapSeats(captainId, seatA, seatB) {
 }
 
 export async function disbandTeam(captainId) {
-  const teams = await loadTeams();
+  const teams = await loadTeams(true);
   if (teams[captainId]) {
     delete teams[captainId];
     await saveTeams(teams);
@@ -164,7 +171,7 @@ export async function disbandTeam(captainId) {
 }
 
 export async function removeMemberEverywhere(memberId) {
-  const teams = await loadTeams();
+  const teams = await loadTeams(true);
   let anyChanged = false;
   for (const team of Object.values(teams)) {
     let teamChanged = false;
@@ -190,7 +197,7 @@ export async function removeMemberEverywhere(memberId) {
 // deltas: [{ captainId, outcome: 'win' | 'loss' }]
 export async function applyRoundResults(deltas) {
   if (deltas.length === 0) return;
-  const teams = await loadTeams();
+  const teams = await loadTeams(true);
   for (const { captainId, outcome } of deltas) {
     const team = teams[captainId];
     if (!team) continue;
@@ -204,7 +211,7 @@ export async function applyRoundResults(deltas) {
 }
 
 export async function resetAllRecords() {
-  const teams = await loadTeams();
+  const teams = await loadTeams(true);
   for (const team of Object.values(teams)) {
     team.wins = 0;
     team.losses = 0;
@@ -215,7 +222,7 @@ export async function resetAllRecords() {
 // records: Map<captainId, { wins, losses }>. Sets every team's record to the
 // given values (0-0 for teams not in the map).
 export async function setAllRecords(records) {
-  const teams = await loadTeams();
+  const teams = await loadTeams(true);
   for (const team of Object.values(teams)) {
     const record = records.get(team.captainId);
     team.wins = record?.wins ?? 0;

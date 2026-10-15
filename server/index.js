@@ -6,7 +6,7 @@ import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
 import { fileURLToPath } from 'url';
-import { redisClient } from './redis.js';
+import { redisClient, isRedisReady } from './redis.js';
 import { recordLogin, getUser, getAllUsers, setEnrollment, getEnrolledUsers, setCaptain, setDecklist } from './userStore.js';
 import {
   getTeam,
@@ -94,13 +94,35 @@ if (!DISCORD_CLIENT_ID || !DISCORD_CLIENT_SECRET || !DISCORD_REDIRECT_URI || !SE
 }
 
 const isProduction = NODE_ENV === 'production';
+// The commit this server is running (Render sets it), so a deploy can be confirmed from outside.
+const RUNNING_VERSION = process.env.RENDER_GIT_COMMIT ? process.env.RENDER_GIT_COMMIT.slice(0, 7) : null;
 const REMINDER_CHANNEL_ID = '1375356544417271900'; // #league-announcements
 const autoRemindersActive = isProduction || process.env.RENDER === 'true';
 
+// A rejected promise in an async route would otherwise hang the request and,
+// unhandled, crash the process. Route it to the error handler instead.
+process.on('unhandledRejection', (reason) => console.error('Unhandled rejection:', reason));
+
 const app = express();
+for (const method of ['get', 'post', 'put', 'delete']) {
+  const register = app[method].bind(app);
+  app[method] = (path, ...handlers) =>
+    register(
+      path,
+      ...handlers.map((handler) =>
+        handler?.constructor?.name === 'AsyncFunction'
+          ? (req, res, next) => handler(req, res, next).catch(next)
+          : handler
+      )
+    );
+}
 app.set('trust proxy', 1);
 app.use(cors({ origin: CLIENT_URL, credentials: true }));
 app.use(express.json());
+app.use((req, res, next) => {
+  if (isRedisReady() || !(req.path.startsWith('/api') || req.path.startsWith('/auth'))) return next();
+  res.status(503).json({ error: 'database_unavailable', version: RUNNING_VERSION });
+});
 app.use(
   session({
     store: new RedisStore({ client: redisClient, prefix: 'orchid:sess:' }),
@@ -511,7 +533,7 @@ app.get('/api/settings', async (req, res) => {
       autoRemindersActive,
       // The commit this server is running (Render sets it), so a server-only
       // deploy can be confirmed from outside.
-      version: process.env.RENDER_GIT_COMMIT ? process.env.RENDER_GIT_COMMIT.slice(0, 7) : null,
+      version: RUNNING_VERSION,
     },
   });
 });
@@ -1367,6 +1389,7 @@ if (autoRemindersActive) {
   // The site is always on now, so advance rounds from the timer too (not just
   // on visits) and announce the new round right after it's generated.
   setInterval(async () => {
+    if (!isRedisReady()) return;
     await maybeAutoAdvance().catch((err) => console.error('Auto-advance check failed:', err));
     await checkNewRoundAnnouncement().catch((err) => console.error('Round announcement failed:', err));
     await checkResultReminders().catch((err) => console.error('Result reminder check failed:', err));
@@ -1375,5 +1398,11 @@ if (autoRemindersActive) {
     if (++roleSyncTick % 5 === 1) queueRoleSync();
   }, 60 * 1000);
 }
+
+app.use((err, req, res, next) => {
+  console.error(`${req.method} ${req.path} failed:`, err);
+  if (res.headersSent) return next(err);
+  res.status(isRedisReady() ? 500 : 503).json({ error: isRedisReady() ? 'server_error' : 'database_unavailable' });
+});
 
 app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));

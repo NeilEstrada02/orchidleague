@@ -1,4 +1,5 @@
 import { redisClient } from './redis.js';
+import { cachedGet, freshGet, cachedSet, dropCached } from './cache.js';
 
 // Everything worth keeping. Sessions, the card cache, reminder claims, the
 // audit log and past-season archives are separate and never rolled back.
@@ -17,8 +18,10 @@ const RETAIN_NIGHTLY = 14;
 const RETAIN_OTHER = 25;
 const NIGHTLY_INTERVAL_MS = 23 * 60 * 60 * 1000;
 
-async function loadIndex() {
-  const raw = await redisClient.get(INDEX_KEY);
+// The index is read every minute by the nightly-backup check, so reads use
+// the cache; creating a backup reads it fresh.
+async function loadIndex(fresh = false) {
+  const raw = fresh ? await freshGet(INDEX_KEY) : await cachedGet(INDEX_KEY);
   if (!raw) return [];
   try {
     return JSON.parse(raw);
@@ -48,7 +51,7 @@ export async function createBackup(reason, note = '', { minIntervalMs = 0 } = {}
   const payload = JSON.stringify({ id, createdAt, reason, note, data });
   await redisClient.set(backupKey(id), payload);
 
-  const index = [{ id, createdAt, reason, note, bytes: payload.length }, ...(await loadIndex())];
+  const index = [{ id, createdAt, reason, note, bytes: payload.length }, ...(await loadIndex(true))];
   const kept = [];
   const counts = { nightly: 0, other: 0 };
   for (const entry of index) {
@@ -57,7 +60,7 @@ export async function createBackup(reason, note = '', { minIntervalMs = 0 } = {}
     if (counts[pool] <= (pool === 'nightly' ? RETAIN_NIGHTLY : RETAIN_OTHER)) kept.push(entry);
     else await redisClient.del(backupKey(entry.id));
   }
-  await redisClient.set(INDEX_KEY, JSON.stringify(kept));
+  await cachedSet(INDEX_KEY, JSON.stringify(kept));
   return kept[0];
 }
 
@@ -79,6 +82,8 @@ export async function restoreBackup(id) {
     if (raw === null || raw === undefined) await redisClient.del(key);
     else await redisClient.set(key, raw);
   }
+  // The restored documents are what readers must see now, not a cached copy.
+  dropCached(...BACKUP_KEYS);
   return backup;
 }
 

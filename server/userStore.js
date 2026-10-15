@@ -1,9 +1,10 @@
-import { redisClient } from './redis.js';
+import { cachedGet, freshGet, cachedSet } from './cache.js';
 
 const KEY = 'orchid:users';
 
-async function loadUsers() {
-  const raw = await redisClient.get(KEY);
+// Readers use the short-lived cache; anything that modifies users reads fresh.
+async function loadUsers(fresh = false) {
+  const raw = fresh ? await freshGet(KEY) : await cachedGet(KEY);
   if (!raw) return {};
   try {
     return JSON.parse(raw);
@@ -13,11 +14,11 @@ async function loadUsers() {
 }
 
 async function saveUsers(users) {
-  await redisClient.set(KEY, JSON.stringify(users));
+  await cachedSet(KEY, JSON.stringify(users));
 }
 
 export async function recordLogin(user) {
-  const users = await loadUsers();
+  const users = await loadUsers(true);
   const now = new Date().toISOString();
   const existing = users[user.id];
   users[user.id] = {
@@ -46,7 +47,7 @@ export async function getUser(id) {
 }
 
 export async function setEnrollment(id, enrolled) {
-  const users = await loadUsers();
+  const users = await loadUsers(true);
   const existing = users[id];
   if (!existing) return null;
   existing.enrolled = enrolled;
@@ -64,7 +65,7 @@ export async function getEnrolledUsers() {
 }
 
 export async function setCaptain(id, isCaptain) {
-  const users = await loadUsers();
+  const users = await loadUsers(true);
   const existing = users[id];
   if (!existing) return null;
   existing.isCaptain = isCaptain;
@@ -73,7 +74,7 @@ export async function setCaptain(id, isCaptain) {
 }
 
 export async function setAdmin(id, isAdmin) {
-  const users = await loadUsers();
+  const users = await loadUsers(true);
   const existing = users[id];
   if (!existing) return null;
   existing.isAdmin = isAdmin;
@@ -82,7 +83,7 @@ export async function setAdmin(id, isAdmin) {
 }
 
 export async function setDecklist(id, text) {
-  const users = await loadUsers();
+  const users = await loadUsers(true);
   const existing = users[id];
   if (!existing) return null;
   existing.decklist = text;
@@ -91,7 +92,7 @@ export async function setDecklist(id, text) {
 }
 
 export async function deleteUsers(ids) {
-  const users = await loadUsers();
+  const users = await loadUsers(true);
   let changed = false;
   for (const id of ids) {
     if (users[id]) {

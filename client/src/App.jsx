@@ -26,6 +26,10 @@ const EXTEND_ERRORS = {
   deadline_in_past: 'That would put the deadline in the past, so the round would end immediately.',
 }
 
+// An error response (e.g. 503 while the database is unreachable) is not data:
+// keep what's already on screen instead of treating it as the real thing.
+const okJson = (res) => (res.ok ? res.json() : null)
+
 const tabFromHash = () => {
   const id = window.location.hash.replace('#', '')
   return TAB_IDS.includes(id) ? id : 'home'
@@ -40,6 +44,7 @@ function App() {
   const [memberBusyId, setMemberBusyId] = useState(null)
   const [error, setError] = useState('')
   const [notice, setNotice] = useState('')
+  const [siteDown, setSiteDown] = useState(false)
   const [bracket, setBracket] = useState({ active: false })
   const [hallOfFame, setHallOfFame] = useState([])
   const [adminSection, setAdminSection] = useState('overview')
@@ -74,40 +79,56 @@ function App() {
 
   const fetchMe = () =>
     fetch(`${SERVER_URL}/api/me`, { credentials: 'include' })
-      .then((res) => res.json())
-      .then((data) => setUser(data.user))
+      .then(okJson)
+      .then((data) => {
+        if (data) setUser(data.user)
+      })
       .catch(() => setUser(null))
 
   const fetchLeague = () =>
     fetch(`${SERVER_URL}/api/league`, { credentials: 'include' })
-      .then((res) => res.json())
-      .then((data) => setLeague(data.users ?? []))
+      .then(okJson)
+      .then((data) => {
+        if (data) setLeague(data.users ?? [])
+      })
       .catch(() => {})
 
   const fetchTeams = () =>
     fetch(`${SERVER_URL}/api/teams`, { credentials: 'include' })
-      .then((res) => res.json())
-      .then((data) => setTeams(data.teams ?? []))
+      .then(okJson)
+      .then((data) => {
+        if (data) setTeams(data.teams ?? [])
+      })
       .catch(() => {})
 
   const fetchSettings = () =>
     fetch(`${SERVER_URL}/api/settings`, { credentials: 'include' })
-      .then((res) => res.json())
-      .then((data) => setSettings(data.settings ?? { signupsOpen: true, dummyAccountsEnabled: false }))
+      .then((res) => {
+        // 503 means the server is up but its database isn't reachable.
+        setSiteDown(res.status === 503)
+        return res.status === 503 ? null : res.json()
+      })
+      .then((data) => {
+        if (data) setSettings(data.settings ?? { signupsOpen: true, dummyAccountsEnabled: false })
+      })
       .catch(() => {})
 
   const fetchPairings = () =>
     fetch(`${SERVER_URL}/api/pairings`, { credentials: 'include' })
-      .then((res) => res.json())
-      .then((data) => setPairings(data.rounds ?? []))
+      .then(okJson)
+      .then((data) => {
+        if (data) setPairings(data.rounds ?? [])
+      })
       .catch(() => {})
 
   // null follows whichever round is currently in progress.
   const decklistRoundRef = useRef(null)
   const fetchDecklists = (round = decklistRoundRef.current) =>
     fetch(`${SERVER_URL}/api/decklists${round ? `?round=${round}` : ''}`, { credentials: 'include' })
-      .then((res) => res.json())
-      .then((data) => setDecklistsData(data ?? { round: null, formats: { pioneer: [], modern: [], standard: [] } }))
+      .then(okJson)
+      .then((data) => {
+        if (data) setDecklistsData(data)
+      })
       .catch(() => {})
 
   const selectDecklistRound = (round) => {
@@ -117,14 +138,18 @@ function App() {
 
   const fetchBracket = () =>
     fetch(`${SERVER_URL}/api/bracket`, { credentials: 'include' })
-      .then((res) => res.json())
-      .then((data) => setBracket(data ?? { active: false }))
+      .then(okJson)
+      .then((data) => {
+        if (data) setBracket(data)
+      })
       .catch(() => {})
 
   const fetchHallOfFame = () =>
     fetch(`${SERVER_URL}/api/hall-of-fame`)
-      .then((res) => res.json())
-      .then((data) => setHallOfFame(data.entries ?? []))
+      .then(okJson)
+      .then((data) => {
+        if (data) setHallOfFame(data.entries ?? [])
+      })
       .catch(() => {})
 
   const refreshAll = () =>
@@ -189,6 +214,13 @@ function App() {
       window.history.replaceState({}, '', window.location.pathname + (rest ? `?${rest}` : ''))
     }
   }, [])
+
+  // While the server can't reach its database, check again every 15 seconds.
+  useEffect(() => {
+    if (!siteDown) return undefined
+    const timer = setInterval(() => refreshAll(), 15000)
+    return () => clearInterval(timer)
+  }, [siteDown])
 
   // Keep the current page in the URL hash so refresh, back/forward and shared
   // links land on the same page.
@@ -1943,6 +1975,14 @@ function App() {
       </header>
 
       <main className="page">
+        {siteDown && (
+          <div className="toast-error" role="alert">
+            <span>
+              The league's database is temporarily unavailable, so standings, pairings and decklists can't load right
+              now. This page will recover on its own as soon as it's back.
+            </span>
+          </div>
+        )}
         {error && (
           <div className="toast-error" role="alert">
             <span>{error}</span>
