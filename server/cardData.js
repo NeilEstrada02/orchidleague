@@ -13,6 +13,22 @@ const MISSING_TTL_SECONDS = 60 * 60 * 12;
 // capped per minute overall no matter how many visitors ask.
 const REQUEST_GAP_MS = 120;
 const MAX_SCRYFALL_REQUESTS_PER_MINUTE = 30;
+// Each name looked up for the first time is written to Redis. The whole league
+// has a few hundred distinct cards, so this ceiling is far above real use and
+// exists to bound what junk names from the public endpoint can cost.
+const MAX_NEW_LOOKUPS_PER_HOUR = 3000;
+let lookupWindowStart = 0;
+let lookupsUsed = 0;
+function takeLookupBudget(count) {
+  const now = Date.now();
+  if (now - lookupWindowStart >= 60 * 60 * 1000) {
+    lookupWindowStart = now;
+    lookupsUsed = 0;
+  }
+  if (lookupsUsed + count > MAX_NEW_LOOKUPS_PER_HOUR) return false;
+  lookupsUsed += count;
+  return true;
+}
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -127,6 +143,10 @@ export async function lookupCards(names) {
 
   for (let i = 0; i < misses.length; i += CHUNK_SIZE) {
     const chunk = misses.slice(i, i + CHUNK_SIZE);
+    if (!takeLookupBudget(chunk.length)) {
+      chunk.forEach(([key]) => unresolved.push(key));
+      continue;
+    }
     let resolved;
     try {
       resolved = await fetchFromScryfall(chunk.map(([, name]) => name));

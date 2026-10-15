@@ -59,6 +59,7 @@ import { logAudit, getAudit } from './auditStore.js';
 import { getRoundStartTime, isValidFirstRound } from './schedule.js';
 import { pickDueReminder, claimReminder, releaseReminder, REMINDER_HOURS } from './reminderScheduler.js';
 import { lookupCards } from './cardData.js';
+import { clientId, createWindowLimiter } from './rateLimit.js';
 import {
   addRoleToMember,
   removeRoleFromMember,
@@ -118,6 +119,20 @@ for (const method of ['get', 'post', 'put', 'delete']) {
 }
 app.set('trust proxy', 1);
 app.use(cors({ origin: CLIENT_URL, credentials: true }));
+
+// Per-visitor request ceilings, applied before anything touches the session
+// store or database. Generous for real use (a page load is ~8 API calls);
+// they exist to keep one source from running up the bill.
+const apiLimiter = createWindowLimiter({ windowMs: 60_000, max: 600 });
+const authLimiter = createWindowLimiter({ windowMs: 60_000, max: 30 });
+const limitFor = (limiter) => (req, res, next) => {
+  const id = clientId(req);
+  if (!id || limiter(id)) return next();
+  res.status(429).json({ error: 'rate_limited' });
+};
+app.use('/api', limitFor(apiLimiter));
+app.use('/auth', limitFor(authLimiter));
+
 app.use(express.json());
 app.use((req, res, next) => {
   if (isRedisReady() || !(req.path.startsWith('/api') || req.path.startsWith('/auth'))) return next();
@@ -534,6 +549,9 @@ app.get('/api/settings', async (req, res) => {
       // The commit this server is running (Render sets it), so a server-only
       // deploy can be confirmed from outside.
       version: RUNNING_VERSION,
+      // Whether this request carried a trustworthy visitor address (Cloudflare's
+      // header), which the per-visitor request limits depend on.
+      perVisitorLimits: Boolean(clientId(req)),
     },
   });
 });
@@ -701,14 +719,14 @@ app.post('/api/team/seats/swap', async (req, res) => {
 // Card details (type, mana cost, image) for rendering decklists. Public like
 // the decklists themselves, so it's bounded: capped batch size and name
 // length, and a per-visitor request limit.
-const cardRequestLog = new Map();
+// Per visitor, and across the whole site, since a distributed flood defeats
+// per-visitor limits alone.
+const cardVisitorLimiter = createWindowLimiter({ windowMs: 60_000, max: 60 });
+const cardSiteLimiter = createWindowLimiter({ windowMs: 60_000, max: 180 });
 app.post('/api/cards', async (req, res) => {
-  const now = Date.now();
-  const recent = (cardRequestLog.get(req.ip) ?? []).filter((t) => now - t < 60_000);
-  if (recent.length >= 60) return res.status(429).json({ error: 'rate_limited' });
-  recent.push(now);
-  cardRequestLog.set(req.ip, recent);
-  if (cardRequestLog.size > 5000) cardRequestLog.clear();
+  if (!cardVisitorLimiter(clientId(req) ?? req.ip) || !cardSiteLimiter()) {
+    return res.status(429).json({ error: 'rate_limited' });
+  }
 
   const { names } = req.body ?? {};
   if (
