@@ -120,39 +120,40 @@ function bestPairing(ids, winsById, rematchSet) {
 // rounds: every round so far (playoffs are ignored). Returns
 // { pairs: [[a, b], ...], byeId, rematches }.
 //
-// With an odd field, the bye goes to the lowest-scoring team that hasn't had
-// one (random among equals) -- unless that would force a rematch somewhere
-// else and a different team's bye wouldn't, in which case the next-lowest
-// candidate gets it. options.byeTeamId fixes the bye recipient.
+// With an odd field the bye is decided FIRST, the way Wizards' own events do
+// it: a random team from the lowest score group that hasn't had a bye yet (if
+// that whole group has had one, the next group up; if everyone has, the lowest
+// group again). Tiebreakers play no part. The bye is never moved to dodge a
+// rematch -- the remaining teams are then paired to avoid rematches as far as
+// possible, and a rematch only happens when it truly can't be avoided.
+// options.byeTeamId fixes the bye recipient.
 export function computePairings(teams, rounds, { byeTeamId = null } = {}) {
   const rematchSet = buildRematchSet(rounds);
   const byeHistory = buildByeHistory(rounds);
   const winsById = new Map(teams.map((t) => [t.captainId, t.wins ?? 0]));
   const ids = teams.map((t) => t.captainId);
 
-  let byeCandidates = [null];
+  let byeId = null;
   if (ids.length % 2 === 1) {
     if (byeTeamId) {
-      byeCandidates = [byeTeamId];
+      byeId = byeTeamId;
     } else {
       const lowestFirst = shuffle(ids).sort((a, b) => winsById.get(a) - winsById.get(b));
       const withoutBye = lowestFirst.filter((id) => !byeHistory.has(id));
-      byeCandidates = withoutBye.length > 0 ? withoutBye : lowestFirst;
+      const pool = withoutBye.length > 0 ? withoutBye : lowestFirst;
+      const lowestWins = winsById.get(pool[0]);
+      const group = pool.filter((id) => winsById.get(id) === lowestWins);
+      byeId = group[Math.floor(Math.random() * group.length)];
     }
   }
 
-  let chosen = null;
-  for (const byeId of byeCandidates) {
-    const result = bestPairing(ids.filter((id) => id !== byeId), winsById, rematchSet);
-    if (!chosen || result.rematches < chosen.rematches) chosen = { ...result, byeId };
-    if (result.rematches === 0) break;
-  }
+  const chosen = bestPairing(ids.filter((id) => id !== byeId), winsById, rematchSet);
 
   // Top tables first; which side is "A" is a coin flip.
   const pairs = chosen.pairs
     .map(([a, b]) => (Math.random() < 0.5 ? [a, b] : [b, a]))
     .sort((p, q) => winsById.get(q[0]) + winsById.get(q[1]) - (winsById.get(p[0]) + winsById.get(p[1])));
-  return { pairs, byeId: chosen.byeId, rematches: chosen.rematches };
+  return { pairs, byeId, rematches: chosen.rematches };
 }
 
 export async function getRounds() {
