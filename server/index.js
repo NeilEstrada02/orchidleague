@@ -204,7 +204,9 @@ app.use((req, res, next) => {
 // Every match in the round with no reported result yet, with both full
 // teams' Discord IDs so anyone involved gets pinged.
 async function getUnreportedMatches(round) {
-  const unreported = round.pairings.filter((p) => p.teamB && !p.result);
+  // skipReminders marks a match that won't be played (e.g. two teams already
+  // locked into the top cut), so nobody gets chased about it.
+  const unreported = round.pairings.filter((p) => p.teamB && !p.result && !p.skipReminders);
   const ctx = await loadContext();
   const matches = unreported.map((p) => {
     const teamA = teamIn(ctx, p.teamA);
